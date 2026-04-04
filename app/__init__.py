@@ -1,0 +1,1 @@
+"""Python teaching app package."""
