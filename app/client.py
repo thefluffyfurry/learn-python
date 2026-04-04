@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, scrolledtext, ttk
 from typing import Any, Dict, List, Optional
 from urllib import error, request
 
@@ -26,11 +26,11 @@ class ApiClient:
             with request.urlopen(req, timeout=8) as response:
                 return json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
-            message = exc.read().decode("utf-8")
+            raw = exc.read().decode("utf-8")
             try:
-                detail = json.loads(message).get("error", message)
+                detail = json.loads(raw).get("error", raw)
             except json.JSONDecodeError:
-                detail = message or str(exc)
+                detail = raw or str(exc)
             raise RuntimeError(detail) from exc
         except error.URLError as exc:
             raise RuntimeError(f"Cannot reach the teaching server at {self.base_url}.") from exc
@@ -58,284 +58,193 @@ class ApiClient:
         return self._call("/submit-lesson", "POST", {"lesson_id": lesson_id, "selected_index": selected_index})
 
 
+class ScrollFrame(tk.Frame):
+    def __init__(self, master: tk.Misc, bg: str) -> None:
+        super().__init__(master, bg=bg)
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.inner = tk.Frame(self.canvas, bg=bg)
+        self.window = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+        self.inner.bind("<Configure>", lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self.window, width=e.width))
+
+    def reset(self) -> None:
+        for child in self.inner.winfo_children():
+            child.destroy()
+        self.canvas.yview_moveto(0)
+
+
 class TeachingApp(tk.Tk):
     def __init__(self, api: ApiClient) -> None:
         super().__init__()
         self.api = api
         self.title("PyQuest Academy")
-        self.geometry("1360x820")
-        self.minsize(1200, 760)
-        self.configure(bg="#0d1b2a")
+        self.geometry("1180x780")
+        self.minsize(860, 620)
+        self.configure(bg="#0b1824")
 
         self.user: Optional[Dict[str, Any]] = None
         self.leaders: List[Dict[str, Any]] = []
         self.lesson_catalog: List[Dict[str, Any]] = []
         self.topic_lookup: Dict[str, List[Dict[str, Any]]] = {}
         self.lesson_lookup: Dict[str, Dict[str, Any]] = {}
-        self.filtered_topic_names: List[str] = []
-        self.filtered_lessons: List[Dict[str, Any]] = []
-        self.active_topic_name: Optional[str] = None
+        self.completed_ids: set[str] = set()
         self.active_lesson: Optional[Dict[str, Any]] = None
-        self.answer_var = tk.IntVar(value=-1)
+
         self.search_var = tk.StringVar()
+        self.filter_var = tk.StringVar(value="All")
+        self.topic_var = tk.StringVar(value="All Topics")
+        self.answer_var = tk.IntVar(value=-1)
 
         self._build_styles()
-        self._build_layout()
+        self._build_shell()
         self._show_auth()
 
     def _build_styles(self) -> None:
         style = ttk.Style(self)
         style.theme_use("clam")
-        style.configure("TProgressbar", troughcolor="#bcccdc", background="#ef8354")
+        style.configure("TNotebook", background="#dce7f3", borderwidth=0)
+        style.configure("TNotebook.Tab", font=("Segoe UI Semibold", 10), padding=(14, 8))
+        style.configure("Board.Treeview", rowheight=30, background="#ffffff", fieldbackground="#ffffff", foreground="#102a43")
+        style.map("Board.Treeview", background=[("selected", "#d9e9ff")], foreground=[("selected", "#102a43")])
+        style.configure("TProgressbar", troughcolor="#d9e2ec", background="#ef8354")
 
-    def _build_layout(self) -> None:
-        self.header = tk.Frame(self, bg="#102a43", height=72)
+    def _build_shell(self) -> None:
+        self.header = tk.Frame(self, bg="#12314d", height=74)
         self.header.pack(fill="x")
         self.header.pack_propagate(False)
+        title = tk.Frame(self.header, bg="#12314d")
+        title.pack(side="left", padx=18)
+        tk.Label(title, text="PyQuest Academy", bg="#12314d", fg="#f0f4f8", font=("Georgia", 24, "bold")).pack(anchor="w")
+        tk.Label(title, text="Python lessons, progress tracking, and leaderboard in a cleaner layout.", bg="#12314d", fg="#b8c8d8", font=("Segoe UI", 10)).pack(anchor="w")
+        self.status_chip = tk.Label(self.header, text="Offline", bg="#1f4f76", fg="#f0f4f8", padx=14, pady=8, font=("Segoe UI Semibold", 10))
+        self.status_chip.pack(side="right", padx=18)
 
-        self.title_label = tk.Label(
-            self.header,
-            text="PyQuest Academy",
-            fg="#f0f4f8",
-            bg="#102a43",
-            font=("Georgia", 24, "bold"),
-        )
-        self.title_label.pack(side="left", padx=18)
+        self.body = tk.Frame(self, bg="#0b1824")
+        self.body.pack(fill="both", expand=True, padx=14, pady=14)
 
-        self.status_label = tk.Label(
-            self.header,
-            text="Offline",
-            fg="#9fb3c8",
-            bg="#102a43",
-            font=("Segoe UI", 11),
-        )
-        self.status_label.pack(side="right", padx=18)
-
-        self.body = tk.Frame(self, bg="#0d1b2a")
-        self.body.pack(fill="both", expand=True, padx=16, pady=16)
-
-        self.auth_frame = tk.Frame(self.body, bg="#1b263b", padx=28, pady=28)
+        self.auth_frame = tk.Frame(self.body, bg="#14273c", padx=28, pady=28)
         self.auth_frame.place(relx=0.5, rely=0.5, anchor="center")
 
-        self.main_frame = tk.Frame(self.body, bg="#0d1b2a")
+        self.app_frame = tk.Frame(self.body, bg="#dce7f3")
 
-        self.nav_panel = tk.Frame(self.main_frame, width=330, bg="#1b263b", padx=14, pady=14)
-        self.nav_panel.pack(side="left", fill="y")
-        self.nav_panel.pack_propagate(False)
+        self._build_auth()
+        self._build_app()
 
-        self.lesson_panel = tk.Frame(self.main_frame, width=360, bg="#243b53", padx=14, pady=14)
-        self.lesson_panel.pack(side="left", fill="y")
-        self.lesson_panel.pack_propagate(False)
-
-        self.content = tk.Frame(self.main_frame, bg="#f8fafc", padx=18, pady=18)
-        self.content.pack(side="left", fill="both", expand=True)
-
-        self._build_auth_widgets()
-        self._build_navigation()
-        self._build_content()
-
-    def _build_auth_widgets(self) -> None:
+    def _build_auth(self) -> None:
+        tk.Label(self.auth_frame, text="Launch your Python journey", bg="#14273c", fg="#f0f4f8", font=("Georgia", 24, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
         tk.Label(
             self.auth_frame,
-            text="Learn Python. Earn XP. Climb the leaderboard.",
-            bg="#1b263b",
-            fg="#f0f4f8",
-            font=("Georgia", 20, "bold"),
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 14))
-        tk.Label(
-            self.auth_frame,
-            text=f"Create an account or log in to sync progress with {self.api.base_url}.",
-            bg="#1b263b",
-            fg="#bcccdc",
+            text=f"Sign in to sync your lessons, XP, and leaderboard data with {self.api.base_url}.",
+            bg="#14273c",
+            fg="#c4d4e4",
             font=("Segoe UI", 11),
             justify="left",
             wraplength=540,
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 18))
+        tk.Label(self.auth_frame, text="Username", bg="#14273c", fg="#f0f4f8", font=("Segoe UI", 11)).grid(row=2, column=0, sticky="w")
+        self.username_entry = tk.Entry(self.auth_frame, font=("Segoe UI", 12), relief="flat")
+        self.username_entry.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(4, 12), ipady=6)
+        tk.Label(self.auth_frame, text="Password", bg="#14273c", fg="#f0f4f8", font=("Segoe UI", 11)).grid(row=4, column=0, sticky="w")
+        self.password_entry = tk.Entry(self.auth_frame, show="*", font=("Segoe UI", 12), relief="flat")
+        self.password_entry.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(4, 18), ipady=6)
+        tk.Button(self.auth_frame, text="Log In", command=self._login, bg="#3e7cb1", fg="white", relief="flat", padx=14, pady=10, font=("Segoe UI Semibold", 11)).grid(row=6, column=0, sticky="ew", padx=(0, 8))
+        tk.Button(self.auth_frame, text="Create Account", command=self._signup, bg="#ef8354", fg="white", relief="flat", padx=14, pady=10, font=("Segoe UI Semibold", 11)).grid(row=6, column=1, sticky="ew")
 
-        tk.Label(self.auth_frame, text="Username", bg="#1b263b", fg="#f0f4f8", font=("Segoe UI", 11)).grid(row=2, column=0, sticky="w")
-        self.username_entry = tk.Entry(self.auth_frame, font=("Segoe UI", 11), width=28)
-        self.username_entry.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(4, 12))
+    def _build_app(self) -> None:
+        summary = tk.Frame(self.app_frame, bg="#eef4fb", padx=16, pady=12)
+        summary.pack(fill="x")
 
-        tk.Label(self.auth_frame, text="Password", bg="#1b263b", fg="#f0f4f8", font=("Segoe UI", 11)).grid(row=4, column=0, sticky="w")
-        self.password_entry = tk.Entry(self.auth_frame, show="*", font=("Segoe UI", 11), width=28)
-        self.password_entry.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(4, 18))
+        identity = tk.Frame(summary, bg="#eef4fb")
+        identity.pack(side="left", fill="x", expand=True)
+        self.user_name = tk.Label(identity, text="Not signed in", bg="#eef4fb", fg="#102a43", font=("Georgia", 20, "bold"))
+        self.user_name.pack(anchor="w")
+        self.user_meta = tk.Label(identity, text="", bg="#eef4fb", fg="#486581", font=("Segoe UI", 10), justify="left")
+        self.user_meta.pack(anchor="w", pady=(2, 8))
+        self.progress = ttk.Progressbar(identity, orient="horizontal", mode="determinate", maximum=100)
+        self.progress.pack(fill="x", pady=(0, 2))
 
-        tk.Button(
-            self.auth_frame,
-            text="Log In",
-            command=self._login,
-            bg="#3e7cb1",
-            fg="white",
-            activebackground="#2b6a99",
-            relief="flat",
-            padx=14,
-            pady=10,
-            font=("Segoe UI Semibold", 11),
-        ).grid(row=6, column=0, sticky="ew", padx=(0, 8))
+        actions = tk.Frame(summary, bg="#eef4fb")
+        actions.pack(side="right")
+        tk.Button(actions, text="Continue Learning", command=self._continue_learning, bg="#ef8354", fg="white", relief="flat", padx=14, pady=10, font=("Segoe UI Semibold", 10)).pack(side="left", padx=4)
+        tk.Button(actions, text="Refresh", command=self._refresh_data, bg="#3e7cb1", fg="white", relief="flat", padx=14, pady=10, font=("Segoe UI Semibold", 10)).pack(side="left", padx=4)
 
-        tk.Button(
-            self.auth_frame,
-            text="Sign Up",
-            command=self._signup,
-            bg="#ef8354",
-            fg="white",
-            activebackground="#db6d3f",
-            relief="flat",
-            padx=14,
-            pady=10,
-            font=("Segoe UI Semibold", 11),
-        ).grid(row=6, column=1, sticky="ew")
+        self.notebook = ttk.Notebook(self.app_frame)
+        self.notebook.pack(fill="both", expand=True, pady=(12, 0))
 
-    def _build_navigation(self) -> None:
-        self.user_card = tk.Label(
-            self.nav_panel,
-            text="Sign in to start",
-            justify="left",
-            anchor="w",
-            bg="#1b263b",
-            fg="#f0f4f8",
-            font=("Segoe UI", 12),
-        )
-        self.user_card.pack(fill="x", pady=(0, 12))
+        self.dashboard_tab = ScrollFrame(self.notebook, "#dce7f3")
+        self.learn_tab = tk.Frame(self.notebook, bg="#dce7f3")
+        self.board_tab = tk.Frame(self.notebook, bg="#dce7f3")
 
-        self.progress_bar = ttk.Progressbar(self.nav_panel, orient="horizontal", mode="determinate", maximum=100)
-        self.progress_bar.pack(fill="x", pady=(0, 14))
+        self.notebook.add(self.dashboard_tab, text="Dashboard")
+        self.notebook.add(self.learn_tab, text="Learn")
+        self.notebook.add(self.board_tab, text="Leaderboard")
 
-        button_row = tk.Frame(self.nav_panel, bg="#1b263b")
-        button_row.pack(fill="x", pady=(0, 14))
-        for label, command in [
-            ("Dashboard", self._show_dashboard),
-            ("Leaderboard", self._show_leaderboard),
-            ("Refresh", self._refresh_data),
-        ]:
-            tk.Button(
-                button_row,
-                text=label,
-                command=command,
-                bg="#486581",
-                fg="white",
-                relief="flat",
-                padx=10,
-                pady=8,
-                font=("Segoe UI Semibold", 9),
-            ).pack(side="left", expand=True, fill="x", padx=3)
+        self._build_learn_tab()
+        self._build_board_tab()
 
-        tk.Label(
-            self.nav_panel,
-            text="Find Lessons",
-            bg="#1b263b",
-            fg="#d9e2ec",
-            font=("Segoe UI Semibold", 12),
-        ).pack(anchor="w")
+    def _build_learn_tab(self) -> None:
+        controls = tk.Frame(self.learn_tab, bg="#dce7f3", padx=10, pady=10)
+        controls.pack(fill="x")
+        tk.Label(controls, text="Search", bg="#dce7f3", fg="#334e68", font=("Segoe UI Semibold", 10)).grid(row=0, column=0, sticky="w")
+        tk.Entry(controls, textvariable=self.search_var, font=("Segoe UI", 11), relief="flat").grid(row=1, column=0, sticky="ew", padx=(0, 10), ipady=4)
+        tk.Label(controls, text="Filter", bg="#dce7f3", fg="#334e68", font=("Segoe UI Semibold", 10)).grid(row=0, column=1, sticky="w")
+        filter_box = ttk.Combobox(controls, textvariable=self.filter_var, values=["All", "Open", "Done"], state="readonly", width=10)
+        filter_box.grid(row=1, column=1, sticky="ew", padx=(0, 10))
+        tk.Label(controls, text="Topic", bg="#dce7f3", fg="#334e68", font=("Segoe UI Semibold", 10)).grid(row=0, column=2, sticky="w")
+        self.topic_box = ttk.Combobox(controls, textvariable=self.topic_var, state="readonly")
+        self.topic_box.grid(row=1, column=2, sticky="ew", padx=(0, 10))
+        tk.Button(controls, text="Open Next", command=self._continue_learning, bg="#ef8354", fg="white", relief="flat", padx=14, pady=8, font=("Segoe UI Semibold", 10)).grid(row=1, column=3, sticky="e")
+        controls.grid_columnconfigure(0, weight=2)
+        controls.grid_columnconfigure(2, weight=2)
+        self.search_var.trace_add("write", self._refresh_lesson_browser)
+        filter_box.bind("<<ComboboxSelected>>", self._refresh_lesson_browser)
+        self.topic_box.bind("<<ComboboxSelected>>", self._refresh_lesson_browser)
 
-        search_entry = tk.Entry(
-            self.nav_panel,
-            textvariable=self.search_var,
-            font=("Segoe UI", 11),
-            relief="flat",
-        )
-        search_entry.pack(fill="x", pady=(6, 12))
-        self.search_var.trace_add("write", self._on_search_change)
+        self.topic_summary = tk.Label(self.learn_tab, text="", bg="#dce7f3", fg="#486581", font=("Segoe UI", 10), anchor="w", justify="left")
+        self.topic_summary.pack(fill="x", padx=12, pady=(0, 10))
 
-        tk.Label(
-            self.nav_panel,
-            text="Topics",
-            bg="#1b263b",
-            fg="#d9e2ec",
-            font=("Segoe UI Semibold", 12),
-        ).pack(anchor="w", pady=(4, 8))
+        panes = ttk.PanedWindow(self.learn_tab, orient="horizontal")
+        panes.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        self.topic_list = tk.Listbox(
-            self.nav_panel,
-            bg="#f0f4f8",
-            fg="#102a43",
-            font=("Segoe UI", 10),
-            activestyle="none",
-            height=16,
-            relief="flat",
-        )
-        self.topic_list.pack(fill="both", expand=True)
-        self.topic_list.bind("<<ListboxSelect>>", self._on_topic_select)
+        left = tk.Frame(panes, bg="#ffffff", padx=10, pady=10)
+        right = tk.Frame(panes, bg="#ffffff", padx=10, pady=10)
+        panes.add(left, weight=1)
+        panes.add(right, weight=3)
 
-        tk.Label(
-            self.lesson_panel,
-            text="Lesson Path",
-            bg="#243b53",
-            fg="#f0f4f8",
-            font=("Georgia", 18, "bold"),
-        ).pack(anchor="w")
-
-        self.topic_meta_label = tk.Label(
-            self.lesson_panel,
-            text="Pick a topic to see its lesson path.",
-            bg="#243b53",
-            fg="#bcccdc",
-            justify="left",
-            wraplength=310,
-            font=("Segoe UI", 10),
-        )
-        self.topic_meta_label.pack(fill="x", pady=(4, 12))
-
-        self.lesson_list = tk.Listbox(
-            self.lesson_panel,
-            bg="#f8fafc",
-            fg="#102a43",
-            font=("Consolas", 10),
-            activestyle="none",
-            relief="flat",
-        )
-        self.lesson_list.pack(fill="both", expand=True)
+        tk.Label(left, text="Lesson List", bg="#ffffff", fg="#102a43", font=("Georgia", 18, "bold")).pack(anchor="w")
+        self.lesson_list = tk.Listbox(left, bg="#f8fbff", fg="#102a43", font=("Segoe UI", 10), activestyle="none")
+        self.lesson_list.pack(fill="both", expand=True, pady=(10, 0))
         self.lesson_list.bind("<<ListboxSelect>>", self._on_lesson_select)
 
-    def _build_content(self) -> None:
-        self.hero_label = tk.Label(
-            self.content,
-            text="Dashboard",
-            bg="#f8fafc",
-            fg="#102a43",
-            anchor="w",
-            justify="left",
-            font=("Georgia", 26, "bold"),
-        )
-        self.hero_label.pack(fill="x", pady=(0, 8))
+        self.detail_scroll = ScrollFrame(right, "#ffffff")
+        self.detail_scroll.pack(fill="both", expand=True)
 
-        self.sub_label = tk.Label(
-            self.content,
-            text="",
-            bg="#f8fafc",
-            fg="#486581",
-            anchor="w",
-            justify="left",
-            font=("Segoe UI", 11),
-        )
-        self.sub_label.pack(fill="x", pady=(0, 12))
-
-        self.dashboard_text = tk.Text(
-            self.content,
-            wrap="word",
-            bg="#ffffff",
-            fg="#102a43",
-            relief="flat",
-            font=("Segoe UI", 11),
-            padx=18,
-            pady=18,
-        )
-        self.dashboard_text.pack(fill="both", expand=True)
+    def _build_board_tab(self) -> None:
+        tk.Label(self.board_tab, text="Top learners ranked by XP and completed lessons.", bg="#dce7f3", fg="#486581", font=("Segoe UI", 11)).pack(anchor="w", padx=12, pady=(12, 8))
+        self.board_table = ttk.Treeview(self.board_tab, columns=("rank", "username", "xp", "done"), show="headings", style="Board.Treeview")
+        for column, label, width in [("rank", "Rank", 90), ("username", "Learner", 260), ("xp", "XP", 140), ("done", "Completed Lessons", 180)]:
+            self.board_table.heading(column, text=label)
+            self.board_table.column(column, width=width, anchor="center")
+        self.board_table.pack(fill="both", expand=True, padx=12, pady=(0, 12))
 
     def _show_auth(self) -> None:
-        self.main_frame.pack_forget()
+        self.app_frame.pack_forget()
         self.auth_frame.place(relx=0.5, rely=0.5, anchor="center")
-        self.status_label.config(text="Authentication required")
+        self.status_chip.config(text="Authentication required")
 
-    def _show_main(self) -> None:
+    def _show_app(self) -> None:
         self.auth_frame.place_forget()
-        self.main_frame.pack(fill="both", expand=True)
-
-    def _signup(self) -> None:
-        self._authenticate("signup")
+        self.app_frame.pack(fill="both", expand=True)
 
     def _login(self) -> None:
         self._authenticate("login")
+
+    def _signup(self) -> None:
+        self._authenticate("signup")
 
     def _authenticate(self, action: str) -> None:
         username = self.username_entry.get().strip()
@@ -350,17 +259,18 @@ class TeachingApp(tk.Tk):
             return
         self.user = result
         self._refresh_data()
-        self._show_main()
-        self._show_dashboard()
+        self._show_app()
 
-    def _group_lessons(self) -> None:
-        grouped: Dict[str, List[Dict[str, Any]]] = {}
-        for lesson in self.lesson_catalog:
-            grouped.setdefault(lesson["topic_name"], []).append(lesson)
-        for lessons in grouped.values():
-            lessons.sort(key=lambda item: item["stage"])
-        self.topic_lookup = dict(sorted(grouped.items()))
-        self.lesson_lookup = {lesson["lesson_id"]: lesson for lesson in self.lesson_catalog}
+    def _topic_choices(self) -> List[str]:
+        return ["All Topics"] + sorted(self.topic_lookup)
+
+    def _level(self, xp: int) -> int:
+        return (xp // 120) + 1
+
+    def _recommended_lesson(self) -> Optional[Dict[str, Any]]:
+        if not self.lesson_catalog:
+            return None
+        return next((lesson for lesson in self.lesson_catalog if lesson["lesson_id"] not in self.completed_ids), self.lesson_catalog[0])
 
     def _refresh_data(self) -> None:
         if self.api.token is None:
@@ -372,209 +282,212 @@ class TeachingApp(tk.Tk):
         except RuntimeError as exc:
             messagebox.showerror("Sync error", str(exc))
             return
+
+        previous_lesson_id = self.active_lesson["lesson_id"] if self.active_lesson else None
+
         self.user = profile
         self.leaders = leaders
         self.lesson_catalog = lessons
-        self._group_lessons()
-        self.status_label.config(text=f"Connected as {profile['username']}")
-        total_lessons = len(self.lesson_catalog) or 1
-        percent = int((profile["completed_lessons"] / total_lessons) * 100)
-        self.progress_bar["value"] = percent
-        self.user_card.config(
+        self.completed_ids = set(profile["completed_lesson_ids"])
+        self.topic_lookup = {}
+        self.lesson_lookup = {}
+        for lesson in lessons:
+            self.topic_lookup.setdefault(lesson["topic_name"], []).append(lesson)
+            self.lesson_lookup[lesson["lesson_id"]] = lesson
+        for topic_lessons in self.topic_lookup.values():
+            topic_lessons.sort(key=lambda item: item["stage"])
+
+        if previous_lesson_id and previous_lesson_id in self.lesson_lookup:
+            self.active_lesson = self.lesson_lookup[previous_lesson_id]
+        else:
+            self.active_lesson = self._recommended_lesson()
+
+        total = len(self.lesson_catalog) or 1
+        percent = int((profile["completed_lessons"] / total) * 100)
+        self.status_chip.config(text=f"Connected as {profile['username']}")
+        self.user_name.config(text=profile["username"])
+        self.user_meta.config(
             text=(
-                f"{profile['username']}\n"
-                f"XP: {profile['xp']}\n"
-                f"Completed: {profile['completed_lessons']} / {total_lessons}\n"
-                f"Progress: {percent}%"
+                f"Level {self._level(profile['xp'])}  |  XP {profile['xp']}  |  "
+                f"Completed {profile['completed_lessons']} / {total}  |  Progress {percent}%"
             )
         )
-        self._populate_topics()
+        self.progress["value"] = percent
 
-    def _populate_topics(self) -> None:
+        self.topic_box["values"] = self._topic_choices()
+        if self.topic_var.get() not in self.topic_box["values"]:
+            self.topic_var.set("All Topics")
+
+        self._render_dashboard()
+        self._refresh_lesson_browser()
+        self._render_leaderboard()
+
+    def _selected_topic(self) -> str:
+        topic = self.topic_var.get().strip()
+        return topic if topic else "All Topics"
+
+    def _filter_lessons(self) -> List[Dict[str, Any]]:
         query = self.search_var.get().strip().lower()
-        self.topic_list.delete(0, tk.END)
-        self.filtered_topic_names = []
-        completed_ids = set(self.user["completed_lesson_ids"]) if self.user else set()
-        for topic_name, lessons in self.topic_lookup.items():
-            if query and not any(
-                query in topic_name.lower() or query in lesson["title"].lower() or query in lesson["lesson_id"].lower()
-                for lesson in lessons
-            ):
+        mode = self.filter_var.get()
+        topic = self._selected_topic()
+        lessons = self.lesson_catalog if topic == "All Topics" else self.topic_lookup.get(topic, [])
+        filtered = []
+        for lesson in lessons:
+            haystack = " ".join(
+                [lesson["lesson_id"], lesson["topic_name"], lesson["title"], lesson["summary"], lesson["challenge"]]
+            ).lower()
+            if query and query not in haystack:
                 continue
-            done_count = sum(1 for lesson in lessons if lesson["lesson_id"] in completed_ids)
-            self.filtered_topic_names.append(topic_name)
-            self.topic_list.insert(tk.END, f"{topic_name}  ({done_count}/{len(lessons)})")
+            done = lesson["lesson_id"] in self.completed_ids
+            if mode == "Open" and done:
+                continue
+            if mode == "Done" and not done:
+                continue
+            filtered.append(lesson)
+        return filtered
 
-        if not self.filtered_topic_names:
-            self.active_topic_name = None
-            self.lesson_list.delete(0, tk.END)
-            self.topic_meta_label.config(text="No topics match this search.")
-            return
+    def _refresh_lesson_browser(self, *_args: object) -> None:
+        filtered = self._filter_lessons()
+        self.filtered_lessons = filtered
+        topic = self._selected_topic()
+        if topic == "All Topics":
+            done = len(self.completed_ids)
+            total = len(self.lesson_catalog)
+            self.topic_summary.config(text=f"Showing {len(filtered)} lessons across all topics. Completed {done} of {total}.")
+        else:
+            total = len(self.topic_lookup.get(topic, []))
+            done = sum(1 for lesson in self.topic_lookup.get(topic, []) if lesson["lesson_id"] in self.completed_ids)
+            self.topic_summary.config(text=f"{topic}: {done}/{total} lessons complete. Showing {len(filtered)} lessons with current filters.")
 
-        if self.active_topic_name not in self.filtered_topic_names:
-            self.active_topic_name = self.filtered_topic_names[0]
-
-        topic_index = self.filtered_topic_names.index(self.active_topic_name)
-        self.topic_list.selection_clear(0, tk.END)
-        self.topic_list.selection_set(topic_index)
-        self.topic_list.activate(topic_index)
-        self._populate_lessons_for_topic(self.active_topic_name)
-
-    def _populate_lessons_for_topic(self, topic_name: str) -> None:
-        query = self.search_var.get().strip().lower()
-        completed_ids = set(self.user["completed_lesson_ids"]) if self.user else set()
-        lessons = self.topic_lookup.get(topic_name, [])
-        self.filtered_lessons = [
-            lesson
-            for lesson in lessons
-            if not query
-            or query in lesson["title"].lower()
-            or query in lesson["lesson_id"].lower()
-            or query in lesson["summary"].lower()
-        ]
         self.lesson_list.delete(0, tk.END)
-        for lesson in self.filtered_lessons:
-            status = "done" if lesson["lesson_id"] in completed_ids else "open"
-            self.lesson_list.insert(
-                tk.END,
-                f"Stage {lesson['stage']:02d} | {status:<4} | {lesson['xp_reward']:>2} XP | {lesson['title']}",
-            )
+        for lesson in filtered:
+            state = "done" if lesson["lesson_id"] in self.completed_ids else "open"
+            self.lesson_list.insert(tk.END, f"{lesson['topic_name']} | Stage {lesson['stage']:02d} | {state} | {lesson['title']}")
 
-        total = len(lessons)
-        shown = len(self.filtered_lessons)
-        completed = sum(1 for lesson in lessons if lesson["lesson_id"] in completed_ids)
-        self.topic_meta_label.config(
-            text=(
-                f"{topic_name}\n"
-                f"{completed}/{total} lessons completed"
-                + (f"\nShowing {shown} matching lessons" if query else "")
-            )
-        )
-
-        next_lesson = next((lesson for lesson in lessons if lesson["lesson_id"] not in completed_ids), lessons[0] if lessons else None)
-        selected_lesson = None
-        if self.active_lesson and self.active_lesson.get("topic_name") == topic_name:
-            selected_lesson = next(
-                (lesson for lesson in self.filtered_lessons if lesson["lesson_id"] == self.active_lesson["lesson_id"]),
-                None,
-            )
-        if selected_lesson is None:
-            selected_lesson = next_lesson if next_lesson in self.filtered_lessons else (self.filtered_lessons[0] if self.filtered_lessons else None)
-
-        if selected_lesson is not None:
-            self.active_lesson = selected_lesson
-            selection_index = self.filtered_lessons.index(selected_lesson)
+        if self.active_lesson and any(item["lesson_id"] == self.active_lesson["lesson_id"] for item in filtered):
+            index = next(i for i, item in enumerate(filtered) if item["lesson_id"] == self.active_lesson["lesson_id"])
             self.lesson_list.selection_clear(0, tk.END)
-            self.lesson_list.selection_set(selection_index)
-            self.lesson_list.activate(selection_index)
-            self._show_lesson(selected_lesson)
+            self.lesson_list.selection_set(index)
+            self.lesson_list.activate(index)
+        elif filtered:
+            self.active_lesson = filtered[0]
+            self.lesson_list.selection_set(0)
+            self.lesson_list.activate(0)
+        else:
+            self.active_lesson = None
 
-    def _on_search_change(self, *_args: str) -> None:
-        if not self.topic_lookup:
+        self._render_lesson_detail(self.active_lesson)
+
+    def _render_dashboard(self) -> None:
+        self.dashboard_tab.reset()
+        if not self.user:
             return
-        self._populate_topics()
 
-    def _show_dashboard(self) -> None:
-        self.hero_label.config(text="Dashboard")
-        total = len(self.lesson_catalog)
-        completed = self.user["completed_lessons"] if self.user else 0
-        remaining = max(total - completed, 0)
-        completed_ids = set(self.user["completed_lesson_ids"]) if self.user else set()
-        topic_lines = []
-        for topic_name, lessons in list(self.topic_lookup.items())[:6]:
-            done = sum(1 for lesson in lessons if lesson["lesson_id"] in completed_ids)
-            topic_lines.append(f"- {topic_name}: {done}/{len(lessons)} complete")
-        self.sub_label.config(text="Browse by topic, search by keyword, and continue from the next open lesson.")
-        self.dashboard_text.delete("1.0", tk.END)
-        self.dashboard_text.insert(
-            tk.END,
-            (
-                "PyQuest Academy now uses a guided lesson path instead of one long lesson list.\n\n"
-                f"Total lessons: {total}\n"
-                f"Completed lessons: {completed}\n"
-                f"Remaining lessons: {remaining}\n"
-                f"Current XP: {self.user['xp'] if self.user else 0}\n\n"
-                "How to use the new system:\n"
-                "- Pick a topic in the left column.\n"
-                "- Use search to narrow topics and lessons.\n"
-                "- The middle column shows the lesson path for that topic.\n"
-                "- The app auto-selects the next unfinished lesson when possible.\n\n"
-                "Topic progress:\n"
-                + "\n".join(topic_lines)
-            ),
-        )
+        total = len(self.lesson_catalog) or 1
+        percent = int((self.user["completed_lessons"] / total) * 100)
+        next_lesson = self._recommended_lesson()
 
-    def _show_leaderboard(self) -> None:
-        self.hero_label.config(text="Leaderboard")
-        self.sub_label.config(text="Top learners ranked by XP and completed lessons.")
-        self.dashboard_text.delete("1.0", tk.END)
-        lines = []
-        for leader in self.leaders:
-            lines.append(
-                f"#{leader['rank']:02d}  {leader['username']:<18}  XP {leader['xp']:<5}  Lessons {leader['completed_lessons']}"
-            )
-        self.dashboard_text.insert(tk.END, "\n".join(lines) if lines else "No leaderboard data yet.")
+        hero = tk.Frame(self.dashboard_tab.inner, bg="#102a43", padx=20, pady=20)
+        hero.pack(fill="x", pady=(0, 14))
+        tk.Label(hero, text=f"Welcome back, {self.user['username']}", bg="#102a43", fg="#f0f4f8", font=("Georgia", 24, "bold")).pack(anchor="w")
+        tk.Label(hero, text=f"Next lesson to tackle: {next_lesson['title'] if next_lesson else 'No lesson available'}", bg="#102a43", fg="#c4d4e4", font=("Segoe UI", 11)).pack(anchor="w", pady=(6, 12))
+        tk.Button(hero, text="Resume Learning", command=self._continue_learning, bg="#ef8354", fg="white", relief="flat", padx=14, pady=10, font=("Segoe UI Semibold", 11)).pack(anchor="w")
 
-    def _on_topic_select(self, _event: object) -> None:
-        if not self.topic_list.curselection():
+        stats_row = tk.Frame(self.dashboard_tab.inner, bg="#dce7f3")
+        stats_row.pack(fill="x", pady=(0, 14))
+        for title, value, bg in [
+            ("Current Level", str(self._level(self.user["xp"])), "#e3f2fd"),
+            ("Total XP", str(self.user["xp"]), "#fff4e8"),
+            ("Completed Lessons", str(self.user["completed_lessons"]), "#e9f8ef"),
+            ("Progress", f"{percent}%", "#f3ebff"),
+        ]:
+            card = tk.Frame(stats_row, bg=bg, padx=16, pady=16, highlightthickness=1, highlightbackground="#d7e3f0")
+            card.pack(side="left", fill="both", expand=True, padx=6)
+            tk.Label(card, text=title, bg=bg, fg="#486581", font=("Segoe UI Semibold", 10)).pack(anchor="w")
+            tk.Label(card, text=value, bg=bg, fg="#102a43", font=("Georgia", 22, "bold")).pack(anchor="w", pady=(8, 0))
+
+        roadmap = tk.Frame(self.dashboard_tab.inner, bg="#ffffff", padx=18, pady=18, highlightthickness=1, highlightbackground="#d7e3f0")
+        roadmap.pack(fill="both", expand=True)
+        tk.Label(roadmap, text="Topic Roadmap", bg="#ffffff", fg="#102a43", font=("Georgia", 22, "bold")).pack(anchor="w")
+        tk.Label(roadmap, text="Pick a topic and jump into the Learn tab without dealing with a cramped three-column layout.", bg="#ffffff", fg="#486581", font=("Segoe UI", 10), justify="left", wraplength=800).pack(anchor="w", pady=(6, 14))
+        grid = tk.Frame(roadmap, bg="#ffffff")
+        grid.pack(fill="both", expand=True)
+        grid.grid_columnconfigure(0, weight=1)
+        grid.grid_columnconfigure(1, weight=1)
+        for index, topic in enumerate(sorted(self.topic_lookup)):
+            lessons = self.topic_lookup[topic]
+            done = sum(1 for lesson in lessons if lesson["lesson_id"] in self.completed_ids)
+            card = tk.Frame(grid, bg="#f8fbff", padx=14, pady=14, highlightthickness=1, highlightbackground="#d7e3f0")
+            card.grid(row=index // 2, column=index % 2, sticky="nsew", padx=6, pady=6)
+            tk.Label(card, text=topic, bg="#f8fbff", fg="#102a43", font=("Segoe UI Semibold", 12)).pack(anchor="w")
+            tk.Label(card, text=f"{done}/{len(lessons)} lessons complete", bg="#f8fbff", fg="#486581", font=("Segoe UI", 10)).pack(anchor="w", pady=(4, 10))
+            bar = ttk.Progressbar(card, orient="horizontal", mode="determinate", maximum=max(len(lessons), 1))
+            bar["value"] = done
+            bar.pack(fill="x", pady=(0, 10))
+            tk.Button(card, text="Open Topic In Learn Tab", command=lambda value=topic: self._jump_to_topic(value), bg="#3e7cb1", fg="white", relief="flat", padx=12, pady=8, font=("Segoe UI Semibold", 9)).pack(anchor="w")
+
+    def _jump_to_topic(self, topic: str) -> None:
+        self.topic_var.set(topic)
+        self.notebook.select(self.learn_tab)
+        self._refresh_lesson_browser()
+
+    def _continue_learning(self) -> None:
+        lesson = self._recommended_lesson()
+        if lesson is None:
             return
-        self.active_topic_name = self.filtered_topic_names[self.topic_list.curselection()[0]]
-        self._populate_lessons_for_topic(self.active_topic_name)
+        self.topic_var.set(lesson["topic_name"])
+        self.notebook.select(self.learn_tab)
+        self.active_lesson = lesson
+        self._refresh_lesson_browser()
 
     def _on_lesson_select(self, _event: object) -> None:
         if not self.lesson_list.curselection():
             return
-        lesson = self.filtered_lessons[self.lesson_list.curselection()[0]]
-        self.active_lesson = lesson
-        self._show_lesson(lesson)
+        self.active_lesson = self.filtered_lessons[self.lesson_list.curselection()[0]]
+        self._render_lesson_detail(self.active_lesson)
 
-    def _show_lesson(self, lesson: Dict[str, Any]) -> None:
-        self.active_lesson = lesson
+    def _render_lesson_detail(self, lesson: Optional[Dict[str, Any]]) -> None:
+        self.detail_scroll.reset()
+        if lesson is None:
+            box = tk.Frame(self.detail_scroll.inner, bg="#ffffff", padx=18, pady=18)
+            box.pack(fill="both", expand=True)
+            tk.Label(box, text="No lesson matches the current filters.", bg="#ffffff", fg="#102a43", font=("Georgia", 20, "bold")).pack(anchor="w")
+            return
+
+        status = "Completed" if lesson["lesson_id"] in self.completed_ids else "Ready to complete"
+
+        hero = tk.Frame(self.detail_scroll.inner, bg="#102a43", padx=18, pady=18)
+        hero.pack(fill="x", pady=(0, 12))
+        tk.Label(hero, text=lesson["title"], bg="#102a43", fg="#f0f4f8", font=("Georgia", 22, "bold"), wraplength=760, justify="left").pack(anchor="w")
+        tk.Label(hero, text=f"{lesson['topic_name']} | Stage {lesson['stage']:02d} | {lesson['xp_reward']} XP | {status}", bg="#102a43", fg="#c4d4e4", font=("Segoe UI", 10)).pack(anchor="w", pady=(6, 0))
+
+        for title, body, bg, fg in [
+            ("Overview", lesson["explanation"], "#ffffff", "#334e68"),
+            ("Challenge", lesson["challenge"], "#fff8f1", "#664d1e"),
+        ]:
+            card = tk.Frame(self.detail_scroll.inner, bg=bg, padx=18, pady=18, highlightthickness=1, highlightbackground="#d7e3f0")
+            card.pack(fill="x", pady=(0, 12))
+            tk.Label(card, text=title, bg=bg, fg="#102a43", font=("Georgia", 18, "bold")).pack(anchor="w")
+            tk.Label(card, text=body, bg=bg, fg=fg, font=("Segoe UI", 11), wraplength=760, justify="left").pack(anchor="w", pady=(10, 0))
+
+        code_card = tk.Frame(self.detail_scroll.inner, bg="#0f1720", padx=18, pady=18, highlightthickness=1, highlightbackground="#1f2d3d")
+        code_card.pack(fill="x", pady=(0, 12))
+        tk.Label(code_card, text="Code Sample", bg="#0f1720", fg="#f0f4f8", font=("Georgia", 18, "bold")).pack(anchor="w")
+        code_box = scrolledtext.ScrolledText(code_card, height=9, wrap="none", bg="#111b26", fg="#e5eff9", insertbackground="#e5eff9", relief="flat", font=("Consolas", 10))
+        code_box.pack(fill="x", pady=(10, 0))
+        code_box.insert("1.0", lesson["code_sample"])
+        code_box.configure(state="disabled")
+
+        quiz = tk.Frame(self.detail_scroll.inner, bg="#f7fbff", padx=18, pady=18, highlightthickness=1, highlightbackground="#d7e3f0")
+        quiz.pack(fill="x")
+        tk.Label(quiz, text="Quiz Checkpoint", bg="#f7fbff", fg="#102a43", font=("Georgia", 18, "bold")).pack(anchor="w")
+        tk.Label(quiz, text=lesson["quiz"]["prompt"], bg="#f7fbff", fg="#334e68", font=("Segoe UI", 11), wraplength=760, justify="left").pack(anchor="w", pady=(10, 12))
         self.answer_var.set(-1)
-        self.hero_label.config(text=lesson["title"])
-        self.sub_label.config(text=f"{lesson['topic_name']} | Stage {lesson['stage']} | Reward {lesson['xp_reward']} XP")
-        self.dashboard_text.delete("1.0", tk.END)
-        self.dashboard_text.insert(
-            tk.END,
-            (
-                f"{lesson['summary']}\n\n"
-                f"{lesson['explanation']}\n\n"
-                "Code sample:\n"
-                f"{lesson['code_sample']}\n\n"
-                "Challenge:\n"
-                f"{lesson['challenge']}\n\n"
-                "Quiz:\n"
-                f"{lesson['quiz']['prompt']}\n\n"
-            ),
-        )
         for index, option in enumerate(lesson["quiz"]["options"]):
-            radio = tk.Radiobutton(
-                self.dashboard_text,
-                text=option,
-                variable=self.answer_var,
-                value=index,
-                bg="#ffffff",
-                fg="#102a43",
-                selectcolor="#d9e2ec",
-                font=("Segoe UI", 10),
-                anchor="w",
-                justify="left",
-            )
-            self.dashboard_text.window_create(tk.END, window=radio)
-            self.dashboard_text.insert(tk.END, "\n")
-        submit = tk.Button(
-            self.dashboard_text,
-            text="Submit Answer",
-            command=self._submit_answer,
-            bg="#3e7cb1",
-            fg="white",
-            relief="flat",
-            padx=12,
-            pady=8,
-            font=("Segoe UI Semibold", 10),
-        )
-        self.dashboard_text.insert(tk.END, "\n")
-        self.dashboard_text.window_create(tk.END, window=submit)
+            tk.Radiobutton(quiz, text=option, variable=self.answer_var, value=index, bg="#f7fbff", fg="#102a43", selectcolor="#d9e9ff", anchor="w", justify="left", wraplength=720, font=("Segoe UI", 10)).pack(fill="x", pady=4)
+        self.feedback_label = tk.Label(quiz, text="", bg="#f7fbff", fg="#486581", font=("Segoe UI", 10), wraplength=760, justify="left")
+        self.feedback_label.pack(anchor="w", pady=(10, 0))
+        tk.Button(quiz, text="Submit Answer", command=self._submit_answer, bg="#ef8354", fg="white", relief="flat", padx=14, pady=10, font=("Segoe UI Semibold", 10)).pack(anchor="w", pady=(12, 0))
 
     def _submit_answer(self) -> None:
         if self.active_lesson is None:
@@ -589,16 +502,21 @@ class TeachingApp(tk.Tk):
             messagebox.showerror("Submission failed", str(exc))
             return
         verdict = "Correct" if result["correct"] else "Not quite"
-        messagebox.showinfo(
-            "Lesson result",
-            f"{verdict}\nXP gained: {result['xp_gained']}\nNew XP total: {result['new_xp']}\n\n{result['explanation']}",
+        self.feedback_label.config(
+            text=f"{verdict}. XP gained: {result['xp_gained']}. New XP total: {result['new_xp']}.\n{result['explanation']}",
+            fg="#1f7a3d" if result["correct"] else "#9c4221",
         )
-        current_topic = self.active_lesson["topic_name"]
-        current_lesson_id = self.active_lesson["lesson_id"]
+        lesson_id = self.active_lesson["lesson_id"]
         self._refresh_data()
-        self.active_topic_name = current_topic
-        self.active_lesson = self.lesson_lookup.get(current_lesson_id, self.active_lesson)
-        self._populate_topics()
+        if lesson_id in self.lesson_lookup:
+            self.active_lesson = self.lesson_lookup[lesson_id]
+            self._refresh_lesson_browser()
+
+    def _render_leaderboard(self) -> None:
+        for row in self.board_table.get_children():
+            self.board_table.delete(row)
+        for leader in self.leaders:
+            self.board_table.insert("", "end", values=(leader["rank"], leader["username"], leader["xp"], leader["completed_lessons"]))
 
 
 def run_client(base_url: str) -> None:
