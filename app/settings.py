@@ -7,6 +7,7 @@ import os
 
 LOCAL_API_URL = "http://127.0.0.1:8123"
 HOSTED_API_URL = "https://keyquuyuamfuvotaruod.supabase.co/functions/v1/pyquest-api"
+UPDATE_MANIFEST_URL = "https://keyquuyuamfuvotaruod.supabase.co/storage/v1/object/public/updates/update_manifest.json"
 
 
 def get_api_url() -> str:

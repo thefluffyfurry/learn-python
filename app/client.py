@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, ttk
 from typing import Any, Dict, List, Optional
@@ -11,7 +12,9 @@ from urllib import error, request
 
 from app.content import LESSON_MAP
 from app.runtime import app_root
-from app.settings import LOCAL_API_URL
+from app.settings import LOCAL_API_URL, UPDATE_MANIFEST_URL
+from app.updater import UpdateInfo, can_self_update, fetch_update, stage_update
+from app.version import APP_NAME, APP_VERSION
 
 
 class ApiError(RuntimeError):
@@ -377,6 +380,14 @@ class ApiClient:
             self.token = self.local_token
             return result
 
+    def clear_session(self) -> None:
+        self.token = None
+        self.hosted_token = None
+        self.local_token = None
+        self.username = None
+        self.password = None
+        self.last_source = "local" if self.is_local_mode() else "hosted"
+
 
 class ScrollFrame(tk.Frame):
     def __init__(self, master: tk.Misc, bg: str) -> None:
@@ -401,7 +412,7 @@ class TeachingApp(tk.Tk):
     def __init__(self, api: ApiClient) -> None:
         super().__init__()
         self.api = api
-        self.title("PyQuest Academy")
+        self.title(APP_NAME)
         self.geometry("1180x780")
         self.minsize(860, 620)
         self.configure(bg="#f4efe8")
@@ -433,6 +444,9 @@ class TeachingApp(tk.Tk):
         self.lesson_lookup: Dict[str, Dict[str, Any]] = {}
         self.completed_ids: set[str] = set()
         self.active_lesson: Optional[Dict[str, Any]] = None
+        self.update_check_started = False
+        self.update_prompt_open = False
+        self.update_download_running = False
 
         self.search_var = tk.StringVar()
         self.filter_var = tk.StringVar(value="All")
@@ -442,6 +456,7 @@ class TeachingApp(tk.Tk):
         self._build_styles()
         self._build_shell()
         self._show_auth()
+        self.after(1200, self._check_for_updates_async)
 
     def _build_styles(self) -> None:
         style = ttk.Style(self)
@@ -491,6 +506,7 @@ class TeachingApp(tk.Tk):
             fg=self.colors["shell_muted"],
             font=("Segoe UI", 10),
         ).pack(anchor="w")
+        tk.Label(title, text=f"Desktop version {APP_VERSION}", bg=self.colors["shell"], fg="#8fb0ca", font=("Segoe UI", 9)).pack(anchor="w", pady=(4, 0))
 
         status_wrap = tk.Frame(self.header, bg=self.colors["shell"])
         status_wrap.pack(side="right", padx=22, pady=16)
@@ -663,6 +679,7 @@ class TeachingApp(tk.Tk):
         self.sync_detail.pack(anchor="w", pady=(6, 0))
         tk.Button(actions, text="Continue Learning", command=self._continue_learning, bg=self.colors["accent"], fg="white", relief="flat", padx=16, pady=10, font=("Segoe UI Semibold", 10)).pack(side="left", padx=4)
         tk.Button(actions, text="Refresh", command=self._refresh_data, bg=self.colors["shell_soft"], fg="white", relief="flat", padx=16, pady=10, font=("Segoe UI Semibold", 10)).pack(side="left", padx=4)
+        tk.Button(actions, text="Log Out", command=self._logout, bg="#8d3f36", fg="white", relief="flat", padx=16, pady=10, font=("Segoe UI Semibold", 10)).pack(side="left", padx=4)
 
         self.notebook = ttk.Notebook(self.app_frame)
         self.notebook.pack(fill="both", expand=True, pady=(12, 0))
@@ -836,6 +853,94 @@ class TeachingApp(tk.Tk):
         self.user = result
         self._refresh_data()
         self._show_app()
+
+    def _reset_signed_out_view(self) -> None:
+        self.user_name.config(text="Not signed in")
+        self.user_meta.config(text="")
+        self.sync_meta.config(text="")
+        self.progress["value"] = 0
+        self.sync_title.config(text="SYNC STATUS")
+        self.sync_detail.config(text="Waiting for sign-in")
+        self.topic_summary.config(text="")
+        self.answer_var.set(-1)
+        self.lesson_list.delete(0, tk.END)
+        self.board_table.delete(*self.board_table.get_children())
+        self.detail_scroll.reset()
+
+    def _logout(self) -> None:
+        self.api.clear_session()
+        self.user = None
+        self.leaders = []
+        self.lesson_catalog = []
+        self.topic_lookup = {}
+        self.lesson_lookup = {}
+        self.completed_ids = set()
+        self.active_lesson = None
+        self.filter_var.set("All")
+        self.topic_var.set("All Topics")
+        self.search_var.set("")
+        self.username_entry.delete(0, tk.END)
+        self.password_entry.delete(0, tk.END)
+        self._reset_signed_out_view()
+        self._show_auth()
+        self.username_entry.focus_set()
+
+    def _check_for_updates_async(self) -> None:
+        if self.update_check_started or self.update_download_running or not UPDATE_MANIFEST_URL.strip():
+            return
+        self.update_check_started = True
+        threading.Thread(target=self._check_for_updates_worker, daemon=True).start()
+
+    def _check_for_updates_worker(self) -> None:
+        try:
+            update = fetch_update(UPDATE_MANIFEST_URL)
+        except RuntimeError:
+            update = None
+        self.after(0, lambda: self._handle_update_result(update))
+
+    def _handle_update_result(self, update: Optional[UpdateInfo]) -> None:
+        self.update_check_started = False
+        if update is None or self.update_prompt_open:
+            return
+
+        self.update_prompt_open = True
+        detail = f"A new version is available.\n\nCurrent version: {APP_VERSION}\nNew version: {update.version}"
+        if update.notes:
+            detail += f"\n\nWhat's new:\n{update.notes}"
+
+        if not can_self_update():
+            messagebox.showinfo("Update Available", detail)
+            self.update_prompt_open = False
+            return
+
+        should_install = messagebox.askyesno("Update Available", f"{detail}\n\nDownload and restart now?")
+        self.update_prompt_open = False
+        if should_install:
+            self._download_update_async(update)
+
+    def _download_update_async(self, update: UpdateInfo) -> None:
+        if self.update_download_running:
+            return
+        self.update_download_running = True
+        self.status_chip.config(text="Downloading update")
+        threading.Thread(target=self._download_update_worker, args=(update,), daemon=True).start()
+
+    def _download_update_worker(self, update: UpdateInfo) -> None:
+        error_text: Optional[str] = None
+        try:
+            stage_update(update)
+        except RuntimeError as exc:
+            error_text = str(exc)
+        self.after(0, lambda: self._finish_update_download(error_text))
+
+    def _finish_update_download(self, error_text: Optional[str]) -> None:
+        self.update_download_running = False
+        self._refresh_mode_panels(self.user["username"] if self.user else None)
+        if error_text:
+            messagebox.showerror("Update Failed", error_text)
+            return
+        messagebox.showinfo("Installing Update", "The new version is ready. The app will close and relaunch now.")
+        self.after(150, self.destroy)
 
     def _topic_choices(self) -> List[str]:
         return ["All Topics"] + sorted(self.topic_lookup)
