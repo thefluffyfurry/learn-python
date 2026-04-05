@@ -45,6 +45,12 @@ $env:PYQUEST_API_URL='https://your-domain.example/api'
 python main.py
 ```
 
+Or set `HOSTED_API_URL` in `app/settings.py` to your real deployed API URL and then run:
+
+```powershell
+python main.py
+```
+
 Use local development mode by setting:
 
 ```powershell
@@ -52,4 +58,4 @@ $env:PYQUEST_API_URL='http://127.0.0.1:8123'
 python main.py
 ```
 
-Without `PYQUEST_API_URL`, the desktop app stays in local mode until you replace the placeholder hosted URL in `app/settings.py` or set the environment variable when starting the app.
+Without `PYQUEST_API_URL`, the desktop app uses `HOSTED_API_URL` from `app/settings.py` if you replace the placeholder value. If the placeholder is still unchanged, the desktop app stays in local mode.

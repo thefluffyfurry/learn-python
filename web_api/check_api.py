@@ -9,7 +9,8 @@ from urllib import error, request
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("Usage: python web_api/check_api.py https://your-domain.example/api")
+        print("Usage: python web_api/check_api.py <api-base-url>")
+        print("Example: python web_api/check_api.py https://your-project.supabase.co/functions/v1/pyquest-api")
         return 1
 
     base_url = sys.argv[1].rstrip("/")
@@ -20,6 +21,12 @@ def main() -> int:
         with request.urlopen(req, timeout=10) as response:
             body = response.read().decode("utf-8")
             content_type = response.headers.get("Content-Type", "")
+    except error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        print(f"Request failed: HTTP {exc.code}")
+        if body:
+            print(f"Body: {body[:400]}")
+        return 1
     except error.URLError as exc:
         print(f"Request failed: {exc}")
         return 1

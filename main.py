@@ -10,9 +10,13 @@ from app.settings import get_api_url, should_start_local_server
 def main() -> None:
     api_url = get_api_url()
     server: TeachingServer | None = None
-    if should_start_local_server(api_url):
+    try:
         server = TeachingServer()
         server.start_in_background()
+    except OSError:
+        if should_start_local_server(api_url):
+            raise
+        server = None
     try:
         run_client(api_url)
     finally:

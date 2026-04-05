@@ -5,3 +5,5 @@ __pycache__/
 *.db
 web_api/api/config.php
 .idea/workspace.xml
+supabase/.temp/
+supabase/.branches/

@@ -1,0 +1,4 @@
+project_id = "pyquest-academy"
+
+[functions.pyquest-api]
+verify_jwt = false

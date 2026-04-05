@@ -6,11 +6,19 @@ import os
 
 
 LOCAL_API_URL = "http://127.0.0.1:8123"
-HOSTED_API_URL = "https://your-domain.example/api"
+HOSTED_API_URL = "https://keyquuyuamfuvotaruod.supabase.co/functions/v1/pyquest-api"
 
 
 def get_api_url() -> str:
-    return os.environ.get("PYQUEST_API_URL", LOCAL_API_URL).rstrip("/")
+    env_url = os.environ.get("PYQUEST_API_URL", "").strip()
+    if env_url:
+        return env_url.rstrip("/")
+
+    hosted_url = HOSTED_API_URL.strip().rstrip("/")
+    if hosted_url:
+        return hosted_url
+
+    return LOCAL_API_URL
 
 
 def should_start_local_server(api_url: str) -> bool:

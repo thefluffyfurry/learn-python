@@ -14,9 +14,10 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 from app.content import LESSON_MAP, LESSONS
+from app.runtime import app_root
 
 
-APP_ROOT = Path(__file__).resolve().parent.parent
+APP_ROOT = app_root()
 
 
 class TeachingServer:
