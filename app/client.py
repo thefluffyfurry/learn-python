@@ -12,8 +12,8 @@ from urllib import error, request
 
 from app.content import LESSON_MAP
 from app.runtime import app_root
-from app.settings import LOCAL_API_URL, UPDATE_MANIFEST_URL
-from app.updater import UpdateInfo, can_self_update, fetch_update, stage_update
+from app.settings import GITHUB_UPDATE_ASSET_NAME, GITHUB_UPDATE_REPO, LOCAL_API_URL
+from app.updater import UpdateInfo, can_self_update, fetch_github_update, stage_update, sync_installed_version
 from app.version import APP_NAME, APP_VERSION
 
 
@@ -456,6 +456,7 @@ class TeachingApp(tk.Tk):
         self._build_styles()
         self._build_shell()
         self._show_auth()
+        sync_installed_version()
         self.after(1200, self._check_for_updates_async)
 
     def _build_styles(self) -> None:
@@ -886,14 +887,16 @@ class TeachingApp(tk.Tk):
         self.username_entry.focus_set()
 
     def _check_for_updates_async(self) -> None:
-        if self.update_check_started or self.update_download_running or not UPDATE_MANIFEST_URL.strip():
+        if self.update_check_started or self.update_download_running:
+            return
+        if not GITHUB_UPDATE_REPO.strip() or not GITHUB_UPDATE_ASSET_NAME.strip():
             return
         self.update_check_started = True
         threading.Thread(target=self._check_for_updates_worker, daemon=True).start()
 
     def _check_for_updates_worker(self) -> None:
         try:
-            update = fetch_update(UPDATE_MANIFEST_URL)
+            update = fetch_github_update(GITHUB_UPDATE_REPO, GITHUB_UPDATE_ASSET_NAME)
         except RuntimeError:
             update = None
         self.after(0, lambda: self._handle_update_result(update))
@@ -907,6 +910,8 @@ class TeachingApp(tk.Tk):
         detail = f"A new version is available.\n\nCurrent version: {APP_VERSION}\nNew version: {update.version}"
         if update.notes:
             detail += f"\n\nWhat's new:\n{update.notes}"
+        elif update.release_url:
+            detail += f"\n\nRelease page:\n{update.release_url}"
 
         if not can_self_update():
             messagebox.showinfo("Update Available", detail)
