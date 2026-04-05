@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PyQuest Academy Web Studio</title>
+  <meta name="description" content="A polished browser edition of PyQuest Academy with hosted sync, browser fallback, roadmap browsing, and lesson quizzes.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <p class="eyebrow">PyQuest Academy</p>
+        <strong>Web Studio</strong>
+      </div>
+      <nav class="topnav">
+        <a href="#dashboard">Dashboard</a>
+        <a href="#roadmap">Roadmap</a>
+        <a href="#lessons">Lessons</a>
+        <a href="#leaderboard">Leaderboard</a>
+      </nav>
+      <button id="open-next-button" class="button button-dark" type="button">Continue Learning</button>
+    </header>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Browser Learning Experience</p>
+        <h1>Python lessons with real momentum, not a dead flat course page.</h1>
+        <p class="hero-text">
+          Study from any browser, sync with the hosted API when it is available, and keep browser-side progress when it is not.
+        </p>
+        <div class="hero-pills">
+          <span id="mode-pill" class="pill pill-online">Loading</span>
+          <span id="api-pill" class="pill pill-muted">Checking hosted sync</span>
+        </div>
+      </div>
+
+      <div class="hero-stack">
+        <article class="hero-card hero-card-large">
+          <p class="card-label">Featured Track</p>
+          <h2 id="hero-track">Loading topic</h2>
+          <p id="hero-track-detail">Preparing your next lesson.</p>
+        </article>
+
+        <div class="hero-metrics">
+          <article class="metric-card">
+            <span>Topics</span>
+            <strong id="topic-count">0</strong>
+          </article>
+          <article class="metric-card">
+            <span>Lessons</span>
+            <strong id="lesson-count">0</strong>
+          </article>
+          <article class="metric-card">
+            <span>Completed</span>
+            <strong id="done-count">0</strong>
+          </article>
+          <article class="metric-card">
+            <span>XP</span>
+            <strong id="xp-count">0</strong>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="dashboard" class="dashboard-strip">
+      <article class="panel auth-panel">
+        <div class="section-head">
+          <div>
+            <p class="panel-label">Account</p>
+            <h2 id="auth-title">Hosted login</h2>
+          </div>
+        </div>
+        <p id="auth-detail" class="muted">Sign in to save progress to the hosted server. If the API is unavailable, the site still works in browser-only mode.</p>
+        <div class="auth-fields">
+          <label>
+            <span>Username</span>
+            <input id="username-input" type="text" autocomplete="username" placeholder="learner name">
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="password-input" type="password" autocomplete="current-password" placeholder="password">
+          </label>
+        </div>
+        <div class="auth-actions">
+          <button id="login-button" class="button button-dark" type="button">Log In</button>
+          <button id="signup-button" class="button button-accent" type="button">Create Account</button>
+          <button id="logout-button" class="button button-soft" type="button">Log Out</button>
+        </div>
+        <p id="auth-message" class="status-line">Ready.</p>
+      </article>
+
+      <article class="panel overview-panel">
+        <div class="section-head">
+          <div>
+            <p class="panel-label">Dashboard</p>
+            <h2 id="profile-name">Guest learner</h2>
+          </div>
+          <button id="refresh-button" class="button button-soft" type="button">Refresh</button>
+        </div>
+        <p id="profile-meta" class="muted">Browse lessons without signing in, or connect to hosted sync.</p>
+        <div class="progress-rail">
+          <div id="progress-bar" class="progress-fill"></div>
+        </div>
+        <div class="summary-grid">
+          <article class="info-card">
+            <p class="card-label">Server Sync</p>
+            <strong id="sync-title">Checking</strong>
+            <p id="sync-detail">Loading hosted endpoint and browser cache state.</p>
+          </article>
+          <article class="info-card">
+            <p class="card-label">Recommended Next</p>
+            <strong id="next-lesson-title">Loading lessons</strong>
+            <p id="next-lesson-detail">The next lesson will appear here.</p>
+          </article>
+          <article class="info-card">
+            <p class="card-label">Browser Cache</p>
+            <strong id="local-cache-title">Local progress active</strong>
+            <p id="local-cache-detail">Completed lessons are also tracked in this browser.</p>
+          </article>
+        </div>
+      </article>
+    </section>
+
+    <section class="studio-grid">
+      <article id="roadmap" class="panel roadmap-panel">
+        <div class="section-head">
+          <div>
+            <p class="panel-label">Topic Radar</p>
+            <h2>See the curriculum as a map, not a wall of buttons.</h2>
+          </div>
+        </div>
+        <p id="topic-progress-caption" class="muted">Loading topic progress.</p>
+        <div id="topic-spotlight-list" class="topic-spotlight-list"></div>
+      </article>
+
+      <article id="lessons" class="panel library-panel">
+        <div class="section-head">
+          <div>
+            <p class="panel-label">Lesson Browser</p>
+            <h2>Search, filter, and open the next useful lesson.</h2>
+          </div>
+        </div>
+        <div class="filter-bar">
+          <input id="search-input" type="search" placeholder="Search topic, title, or challenge">
+          <select id="filter-select">
+            <option value="all">All</option>
+            <option value="open">Open</option>
+            <option value="done">Done</option>
+          </select>
+          <select id="topic-select">
+            <option value="all">All Topics</option>
+          </select>
+        </div>
+        <p id="lesson-summary" class="muted">Loading lessons...</p>
+        <div id="lesson-list" class="lesson-list"></div>
+      </article>
+
+      <article class="panel lesson-panel">
+        <div id="lesson-empty" class="empty-state">Choose a lesson to enter the study workspace.</div>
+        <article id="lesson-content" class="lesson-article hidden">
+          <div class="lesson-head">
+            <div>
+              <p id="lesson-topic" class="panel-label"></p>
+              <h3 id="lesson-title"></h3>
+            </div>
+            <div class="meta-chips">
+              <span id="lesson-stage" class="pill pill-muted"></span>
+              <span id="lesson-xp" class="pill pill-accent"></span>
+              <span id="lesson-state" class="pill pill-muted"></span>
+            </div>
+          </div>
+          <p id="lesson-summary-detail" class="lesson-summary-text"></p>
+          <section>
+            <h4>Concept walkthrough</h4>
+            <p id="lesson-explanation"></p>
+          </section>
+          <section>
+            <h4>Live code sample</h4>
+            <pre id="lesson-code"></pre>
+          </section>
+          <section>
+            <h4>Challenge prompt</h4>
+            <p id="lesson-challenge"></p>
+          </section>
+          <section class="quiz-box">
+            <div class="quiz-head">
+              <div>
+                <p class="panel-label">Quiz Check</p>
+                <h4 id="quiz-prompt">Quiz</h4>
+              </div>
+            </div>
+            <div id="quiz-options" class="quiz-options"></div>
+            <button id="submit-button" class="button button-accent" type="button">Submit Answer</button>
+            <p id="quiz-feedback" class="status-line"></p>
+          </section>
+        </article>
+      </article>
+    </section>
+
+    <section id="leaderboard" class="panel leaderboard-panel">
+      <div class="section-head">
+        <div>
+          <p class="panel-label">Leaderboard</p>
+          <h2>Community energy when hosted sync is online.</h2>
+        </div>
+      </div>
+      <div id="leaderboard-list" class="leaderboard-list"></div>
+    </section>
+  </div>
+
+  <script type="module" src="assets/app.js"></script>
+</body>
+</html>
