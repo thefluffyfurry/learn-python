@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 *.pyo
 *.db
+web_api/api/config.php
 .idea/workspace.xml

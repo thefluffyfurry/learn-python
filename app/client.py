@@ -14,6 +14,31 @@ class ApiClient:
         self.base_url = base_url.rstrip("/")
         self.token: Optional[str] = None
 
+    def is_local_mode(self) -> bool:
+        normalized = self.base_url.lower()
+        return normalized.startswith("http://127.0.0.1") or normalized.startswith("http://localhost")
+
+    def auth_message(self) -> str:
+        if self.is_local_mode():
+            return (
+                "Local mode is active. Accounts are saved in the local "
+                "teaching_app.db file for this project, so they do not sync "
+                "to another computer unless that database file is copied too."
+            )
+        return f"Sign in to sync your lessons, XP, and leaderboard data with {self.base_url}."
+
+    def _decode_json(self, raw: str) -> Dict[str, Any]:
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            trimmed = raw.lstrip().lower()
+            if trimmed.startswith("<html") or "<script" in trimmed:
+                raise RuntimeError(
+                    "The hosted server returned an HTML page instead of API data. "
+                    "Your web host is blocking desktop app requests, so online sign-in is unavailable right now."
+                ) from exc
+            raise RuntimeError(f"The server at {self.base_url} returned an invalid response.") from exc
+
     def _call(self, path: str, method: str = "GET", payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         data = None
         headers = {"Content-Type": "application/json"}
@@ -24,13 +49,14 @@ class ApiClient:
         req = request.Request(f"{self.base_url}{path}", data=data, headers=headers, method=method)
         try:
             with request.urlopen(req, timeout=8) as response:
-                return json.loads(response.read().decode("utf-8"))
+                raw = response.read().decode("utf-8")
+                return self._decode_json(raw)
         except error.HTTPError as exc:
             raw = exc.read().decode("utf-8")
             try:
-                detail = json.loads(raw).get("error", raw)
-            except json.JSONDecodeError:
-                detail = raw or str(exc)
+                detail = self._decode_json(raw).get("error", raw)
+            except RuntimeError as parse_error:
+                detail = str(parse_error)
             raise RuntimeError(detail) from exc
         except error.URLError as exc:
             raise RuntimeError(f"Cannot reach the teaching server at {self.base_url}.") from exc
@@ -138,7 +164,7 @@ class TeachingApp(tk.Tk):
         tk.Label(self.auth_frame, text="Launch your Python journey", bg="#14273c", fg="#f0f4f8", font=("Georgia", 24, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
         tk.Label(
             self.auth_frame,
-            text=f"Sign in to sync your lessons, XP, and leaderboard data with {self.api.base_url}.",
+            text=self.api.auth_message(),
             bg="#14273c",
             fg="#c4d4e4",
             font=("Segoe UI", 11),
@@ -234,7 +260,7 @@ class TeachingApp(tk.Tk):
     def _show_auth(self) -> None:
         self.app_frame.pack_forget()
         self.auth_frame.place(relx=0.5, rely=0.5, anchor="center")
-        self.status_chip.config(text="Authentication required")
+        self.status_chip.config(text="Local account mode" if self.api.is_local_mode() else "Authentication required")
 
     def _show_app(self) -> None:
         self.auth_frame.place_forget()

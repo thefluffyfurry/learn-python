@@ -16,11 +16,16 @@ from urllib.parse import urlparse
 from app.content import LESSON_MAP, LESSONS
 
 
+APP_ROOT = Path(__file__).resolve().parent.parent
+
+
 class TeachingServer:
     def __init__(self, host: str = "127.0.0.1", port: int = 8123, db_path: Optional[Path] = None) -> None:
         self.host = host
         self.port = port
-        self.db_path = Path(db_path or "teaching_app.db")
+        self.db_path = Path(db_path) if db_path is not None else APP_ROOT / "teaching_app.db"
+        if not self.db_path.is_absolute():
+            self.db_path = APP_ROOT / self.db_path
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self._init_db()

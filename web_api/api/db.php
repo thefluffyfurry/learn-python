@@ -11,7 +11,7 @@ function db(): PDO
 
     $configPath = __DIR__ . '/config.php';
     if (!is_file($configPath)) {
-        json_response(['error' => 'Missing API config.php file.'], 500);
+        json_response(['error' => 'Missing API config.php file. Copy config.example.php to config.php and fill in your database details.'], 500);
     }
 
     $config = require $configPath;
