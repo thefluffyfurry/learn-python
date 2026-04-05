@@ -1,5 +1,5 @@
 {
-  "version": "2.2.1",
+  "version": "5.0.1",
   "download_url": "https://keyquuyuamfuvotaruod.supabase.co/storage/v1/object/public/updates/windows/PyQuestAcademy.exe",
   "notes": "Initial desktop release with hosted sync, offline cache, logout, and updater support."
 }
