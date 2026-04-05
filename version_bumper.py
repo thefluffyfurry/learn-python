@@ -15,6 +15,7 @@ from tkinter import messagebox
 
 VERSION_PATTERN = re.compile(r'APP_VERSION\s*=\s*"([^"]+)"')
 VALID_VERSION = re.compile(r"^\d+(?:\.\d+)*$")
+SERVER_DOWNLOAD_URL = "https://keyquuyuamfuvotaruod.supabase.co/storage/v1/object/public/updates/windows/PyQuestAcademy.zip"
 
 
 def find_project_root() -> Path:
@@ -29,12 +30,12 @@ def find_project_root() -> Path:
         current = base
         while current not in seen:
             seen.add(current)
-            if (current / "app" / "version.py").exists() and (current / "update_manifest.json").exists():
+            if (current / "app" / "version.py").exists() and (current / "supabase" / "update_desktop_release.sql").exists():
                 return current
             if current.parent == current:
                 break
             current = current.parent
-    raise FileNotFoundError("Could not find project root with app/version.py and update_manifest.json.")
+    raise FileNotFoundError("Could not find project root with app/version.py and supabase/update_desktop_release.sql.")
 
 
 def read_current_version(version_file: Path) -> str:
@@ -56,6 +57,40 @@ def update_manifest(manifest_file: Path, new_version: str) -> None:
     payload = json.loads(manifest_file.read_text(encoding="utf-8"))
     payload["version"] = new_version
     manifest_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def update_server_release_sql(sql_file: Path, new_version: str) -> None:
+    sql_file.write_text(
+        "\n".join(
+            [
+                "insert into public.app_updates (",
+                "    slug,",
+                "    version,",
+                "    download_url,",
+                "    asset_name,",
+                "    notes,",
+                "    wipe_local_state",
+                ")",
+                "values (",
+                "    'desktop',",
+                f"    '{new_version}',",
+                f"    '{SERVER_DOWNLOAD_URL}',",
+                "    'PyQuestAcademy.zip',",
+                "    'Full package refresh from the hosted server.',",
+                "    false",
+                ")",
+                "on conflict (slug) do update set",
+                "    version = excluded.version,",
+                "    download_url = excluded.download_url,",
+                "    asset_name = excluded.asset_name,",
+                "    notes = excluded.notes,",
+                "    wipe_local_state = excluded.wipe_local_state,",
+                "    updated_at = timezone('utc', now());",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 def build_main_exe(root_dir: Path) -> Path:
@@ -109,6 +144,7 @@ class VersionBumperApp(tk.Tk):
         self.version_file = root_dir / "app" / "version.py"
         self.manifest_file = root_dir / "update_manifest.json"
         self.example_manifest_file = root_dir / "update_manifest.example.json"
+        self.server_release_sql = root_dir / "supabase" / "update_desktop_release.sql"
         self.current_version = read_current_version(self.version_file)
         self.is_busy = False
 
@@ -156,8 +192,8 @@ class VersionBumperApp(tk.Tk):
 
         files = [
             "app/version.py",
-            "update_manifest.json",
-            "update_manifest.example.json",
+            "supabase/update_desktop_release.sql",
+            "dist_release/PyQuestAcademy.zip",
         ]
         tk.Label(
             card,
@@ -222,6 +258,7 @@ class VersionBumperApp(tk.Tk):
             update_manifest(self.manifest_file, new_version)
             if self.example_manifest_file.exists():
                 update_manifest(self.example_manifest_file, new_version)
+            update_server_release_sql(self.server_release_sql, new_version)
         except Exception as exc:
             messagebox.showerror("Update failed", str(exc))
             return
@@ -252,6 +289,7 @@ class VersionBumperApp(tk.Tk):
             update_manifest(self.manifest_file, new_version)
             if self.example_manifest_file.exists():
                 update_manifest(self.example_manifest_file, new_version)
+            update_server_release_sql(self.server_release_sql, new_version)
             exe_path = build_main_exe(self.root_dir)
         except Exception as exc:
             error_text = str(exc)

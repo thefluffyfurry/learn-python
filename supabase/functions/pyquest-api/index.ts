@@ -33,6 +33,14 @@ type LeaderboardRow = {
   completed_lessons: number;
 };
 
+type AppUpdateRow = {
+  version: string;
+  download_url: string;
+  notes: string | null;
+  asset_name: string | null;
+  wipe_local_state: boolean | null;
+};
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -347,6 +355,31 @@ async function leaderboard(): Promise<Response> {
   });
 }
 
+async function appUpdate(): Promise<Response> {
+  const client = getAdminClient();
+  const { data, error } = await client
+    .from("app_updates")
+    .select("version, download_url, notes, asset_name, wipe_local_state")
+    .eq("slug", "desktop")
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+  if (!data) {
+    return jsonResponse({ error: "Update metadata not configured." }, 404);
+  }
+
+  const row = data as AppUpdateRow;
+  return jsonResponse({
+    version: String(row.version),
+    download_url: String(row.download_url),
+    notes: String(row.notes ?? ""),
+    asset_name: String(row.asset_name ?? ""),
+    wipe_local_state: Boolean(row.wipe_local_state ?? false),
+  });
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -367,6 +400,9 @@ Deno.serve(async (request) => {
     }
     if (request.method === "GET" && path === "/leaderboard") {
       return await leaderboard();
+    }
+    if (request.method === "GET" && path === "/app-update") {
+      return await appUpdate();
     }
 
     if (request.method === "POST" && path === "/signup") {

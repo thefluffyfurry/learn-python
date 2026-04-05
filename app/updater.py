@@ -1,4 +1,4 @@
-"""Windows self-update support backed by GitHub Releases and local SQLite state."""
+"""Windows self-update support backed by the hosted API and local SQLite state."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ class UpdateInfo:
     version: str
     download_url: str
     notes: str = ""
-    release_url: str = ""
     asset_name: str = ""
+    wipe_local_state: bool = False
 
 
 APP_META_DB = app_root() / "teaching_app.db"
@@ -84,20 +84,20 @@ def can_self_update() -> bool:
     return os.name == "nt" and getattr(sys, "frozen", False)
 
 
-def fetch_github_update(repo: str, asset_name: str, zip_asset_name: str = "") -> UpdateInfo | None:
-    repo = repo.strip().strip("/")
-    asset_name = asset_name.strip()
-    zip_asset_name = zip_asset_name.strip()
-    if not repo or not asset_name:
+def fetch_server_update(base_url: str, path: str = "/app-update") -> UpdateInfo | None:
+    base_url = base_url.strip().rstrip("/")
+    path = path.strip() or "/app-update"
+    if not path.startswith("/"):
+        path = f"/{path}"
+    if not base_url:
         return None
 
     current_version = sync_installed_version()
-    api_url = f"https://api.github.com/repos/{repo}/releases/latest"
+    api_url = f"{base_url}{path}"
     req = request.Request(
         api_url,
         headers={
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
+            "Accept": "application/json",
             "User-Agent": "PyQuestAcademyUpdater",
         },
     )
@@ -107,36 +107,28 @@ def fetch_github_update(repo: str, asset_name: str, zip_asset_name: str = "") ->
     except error.HTTPError as exc:
         if exc.code == 404:
             return None
-        raise RuntimeError(f"GitHub update check failed with HTTP {exc.code}.") from exc
+        raise RuntimeError(f"Server update check failed with HTTP {exc.code}.") from exc
     except error.URLError as exc:
-        raise RuntimeError(f"Cannot reach the GitHub update server at {api_url}.") from exc
+        raise RuntimeError(f"Cannot reach the update server at {api_url}.") from exc
 
     try:
         import json
 
         data = json.loads(payload)
     except json.JSONDecodeError as exc:
-        raise RuntimeError("GitHub returned an invalid release response.") from exc
+        raise RuntimeError("The update server returned invalid JSON.") from exc
 
-    version = _normalize_version(str(data.get("tag_name") or data.get("name") or ""))
+    version = _normalize_version(str(data.get("version") or ""))
     if not version:
         return None
 
-    assets = data.get("assets") or []
-    desired_names = [asset_name.lower()]
-    if zip_asset_name:
-        desired_names.append(zip_asset_name.lower())
-    selected_asset = next((asset for asset in assets if str(asset.get("name", "")).strip().lower() in desired_names), None)
-    if selected_asset is None:
-        return None
-
-    resolved_asset_name = str(selected_asset.get("name", "")).strip()
-    download_url = str(selected_asset.get("browser_download_url", "")).strip()
+    download_url = str(data.get("download_url") or "").strip()
     if not download_url:
         return None
 
-    notes = str(data.get("body", "")).strip()
-    release_url = str(data.get("html_url", "")).strip()
+    notes = str(data.get("notes", "")).strip()
+    asset_name = str(data.get("asset_name", "")).strip() or Path(download_url).name
+    wipe_local_state = bool(data.get("wipe_local_state", False))
 
     if _version_key(version) <= _version_key(current_version):
         return None
@@ -144,8 +136,8 @@ def fetch_github_update(repo: str, asset_name: str, zip_asset_name: str = "") ->
         version=version,
         download_url=download_url,
         notes=notes,
-        release_url=release_url,
-        asset_name=resolved_asset_name,
+        asset_name=asset_name,
+        wipe_local_state=wipe_local_state,
     )
 
 
@@ -157,6 +149,7 @@ def stage_update(update: UpdateInfo) -> None:
     pending_exe = current_exe.with_name(f"{current_exe.stem}-{update.version}.pending.exe")
     pending_archive = current_exe.with_name(f"{current_exe.stem}-{update.version}.pending.zip")
     updater_script = current_exe.with_name("apply_update.bat")
+    state_db = APP_META_DB.resolve()
 
     req = request.Request(update.download_url, headers={"User-Agent": "PyQuestAcademyUpdater"})
     try:
@@ -216,6 +209,7 @@ def stage_update(update: UpdateInfo) -> None:
                 "  timeout /t 1 /nobreak >nul",
                 "  goto retry",
                 ")",
+                *([f'del /Q "{state_db}" >nul 2>nul'] if update.wipe_local_state else []),
                 'del /Q "%PENDING_EXE%" >nul 2>nul',
                 'start "" "%CURRENT_EXE%"',
                 'del "%~f0"',

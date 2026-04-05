@@ -7,9 +7,7 @@ import os
 
 LOCAL_API_URL = "http://127.0.0.1:8123"
 HOSTED_API_URL = "https://keyquuyuamfuvotaruod.supabase.co/functions/v1/pyquest-api"
-GITHUB_UPDATE_REPO = "thefluffyfurry/learn-python"
-GITHUB_UPDATE_ASSET_NAME = "PyQuestAcademy.exe"
-GITHUB_UPDATE_ZIP_ASSET_NAME = "PyQuestAcademy.zip"
+SERVER_UPDATE_PATH = "/app-update"
 
 
 def get_api_url() -> str:

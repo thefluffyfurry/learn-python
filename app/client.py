@@ -12,8 +12,8 @@ from urllib import error, request
 
 from app.content import LESSON_MAP
 from app.runtime import app_root
-from app.settings import GITHUB_UPDATE_ASSET_NAME, GITHUB_UPDATE_REPO, GITHUB_UPDATE_ZIP_ASSET_NAME, LOCAL_API_URL
-from app.updater import UpdateInfo, can_self_update, fetch_github_update, stage_update, sync_installed_version
+from app.settings import LOCAL_API_URL, SERVER_UPDATE_PATH
+from app.updater import UpdateInfo, can_self_update, fetch_server_update, stage_update, sync_installed_version
 from app.version import APP_NAME, APP_VERSION
 
 
@@ -889,14 +889,14 @@ class TeachingApp(tk.Tk):
     def _check_for_updates_async(self) -> None:
         if self.update_check_started or self.update_download_running:
             return
-        if not GITHUB_UPDATE_REPO.strip() or not GITHUB_UPDATE_ASSET_NAME.strip():
+        if self.api.is_local_mode():
             return
         self.update_check_started = True
         threading.Thread(target=self._check_for_updates_worker, daemon=True).start()
 
     def _check_for_updates_worker(self) -> None:
         try:
-            update = fetch_github_update(GITHUB_UPDATE_REPO, GITHUB_UPDATE_ASSET_NAME, GITHUB_UPDATE_ZIP_ASSET_NAME)
+            update = fetch_server_update(self.api.base_url, SERVER_UPDATE_PATH)
         except RuntimeError:
             update = None
         self.after(0, lambda: self._handle_update_result(update))
@@ -906,28 +906,16 @@ class TeachingApp(tk.Tk):
         if update is None or self.update_prompt_open:
             return
 
-        self.update_prompt_open = True
-        detail = f"A new version is available.\n\nCurrent version: {APP_VERSION}\nNew version: {update.version}"
-        if update.notes:
-            detail += f"\n\nWhat's new:\n{update.notes}"
-        elif update.release_url:
-            detail += f"\n\nRelease page:\n{update.release_url}"
-
         if not can_self_update():
-            messagebox.showinfo("Update Available", detail)
-            self.update_prompt_open = False
             return
 
-        should_install = messagebox.askyesno("Update Available", f"{detail}\n\nDownload and restart now?")
-        self.update_prompt_open = False
-        if should_install:
-            self._download_update_async(update)
+        self._download_update_async(update)
 
     def _download_update_async(self, update: UpdateInfo) -> None:
         if self.update_download_running:
             return
         self.update_download_running = True
-        self.status_chip.config(text="Downloading update")
+        self.status_chip.config(text="Updating app")
         threading.Thread(target=self._download_update_worker, args=(update,), daemon=True).start()
 
     def _download_update_worker(self, update: UpdateInfo) -> None:
@@ -944,7 +932,7 @@ class TeachingApp(tk.Tk):
         if error_text:
             messagebox.showerror("Update Failed", error_text)
             return
-        messagebox.showinfo("Installing Update", "The new version is ready. The app will close and relaunch now.")
+        messagebox.showinfo("Updating App", "The server version changed. The app will now reinstall and restart.")
         self.after(150, self.destroy)
 
     def _topic_choices(self) -> List[str]:
