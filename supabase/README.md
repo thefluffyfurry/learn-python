@@ -17,6 +17,7 @@ The desktop app still talks to these routes:
 - `GET /profile`
 - `POST /submit-lesson`
 - `GET /leaderboard`
+- `GET /admin/activity` with an admin key header
 
 ## Supabase Setup
 
@@ -25,13 +26,16 @@ The desktop app still talks to these routes:
 3. Sign in with the CLI.
 4. Link this repo to your project.
 5. Run the SQL in `supabase/migrations/20260404_init_pyquest.sql`.
-6. Set the Edge Function secret:
+6. Run the SQL in `supabase/migrations/20260405_add_app_updates.sql`.
+7. Run the SQL in `supabase/migrations/20260405_add_activity_logging.sql`.
+8. Set the Edge Function secrets:
 
 ```powershell
 supabase secrets set PYQUEST_SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+supabase secrets set PYQUEST_ADMIN_API_KEY=your-own-admin-key
 ```
 
-7. Deploy the function:
+9. Deploy the function:
 
 ```powershell
 supabase functions deploy pyquest-api
@@ -63,6 +67,29 @@ python main.py
 ```
 
 Or replace `HOSTED_API_URL` in `app/settings.py` with your real function URL.
+
+## Admin Activity View
+
+Once deployed, every hosted desktop, console, and website request can report:
+
+- app version
+- account username
+- stable session name
+- IP address
+- last seen route
+
+To view it from your computer:
+
+```powershell
+$env:PYQUEST_ADMIN_KEY='your-own-admin-key'
+python admin_activity.py
+```
+
+This prints:
+
+- active clients
+- recent logins and signups
+- recent activity
 
 ## Info I Need From You
 

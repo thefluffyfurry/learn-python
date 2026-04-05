@@ -41,9 +41,20 @@ type AppUpdateRow = {
   wipe_local_state: boolean | null;
 };
 
+type ClientMeta = {
+  installId: string;
+  sessionName: string;
+  clientType: string;
+  appVersion: string;
+  ipAddress: string;
+  ipCountry: string;
+  userAgent: string;
+};
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-admin-key, x-pyquest-app-version, x-pyquest-client-type, x-pyquest-session-name, x-pyquest-install-id",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
@@ -120,6 +131,120 @@ function bearerToken(request: Request): string {
   return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
 }
 
+function firstHeaderValue(header: string | null): string {
+  return String(header ?? "")
+    .split(",")[0]
+    .trim();
+}
+
+function clientMeta(request: Request): ClientMeta {
+  const installId = String(request.headers.get("X-PyQuest-Install-Id") ?? "").trim();
+  const sessionName = String(request.headers.get("X-PyQuest-Session-Name") ?? "").trim();
+  const clientType = String(request.headers.get("X-PyQuest-Client-Type") ?? "unknown").trim() || "unknown";
+  const appVersion = String(request.headers.get("X-PyQuest-App-Version") ?? "").trim();
+  const ipAddress =
+    firstHeaderValue(request.headers.get("CF-Connecting-IP")) ||
+    firstHeaderValue(request.headers.get("X-Forwarded-For")) ||
+    firstHeaderValue(request.headers.get("X-Real-IP"));
+  const ipCountry =
+    String(request.headers.get("CF-IPCountry") ?? request.headers.get("X-Vercel-IP-Country") ?? "").trim();
+  const userAgent = String(request.headers.get("User-Agent") ?? "").trim();
+
+  return {
+    installId,
+    sessionName,
+    clientType,
+    appVersion,
+    ipAddress,
+    ipCountry,
+    userAgent,
+  };
+}
+
+async function recordPresence(
+  request: Request,
+  path: string,
+  eventType: string,
+  user: UserRecord | null = null,
+): Promise<void> {
+  const meta = clientMeta(request);
+  if (!meta.installId) {
+    return;
+  }
+
+  const client = getAdminClient();
+  const username = user?.username ?? null;
+  const userId = user?.id ?? null;
+  const nowIso = new Date().toISOString();
+  const sessionName = meta.sessionName || `${meta.clientType}-${meta.installId.slice(0, 8)}`;
+
+  const { error } = await client.from("client_presence").upsert(
+    {
+      install_id: meta.installId,
+      session_name: sessionName,
+      client_type: meta.clientType,
+      app_version: meta.appVersion,
+      username,
+      user_id: userId,
+      ip_address: meta.ipAddress,
+      ip_country: meta.ipCountry,
+      user_agent: meta.userAgent,
+      last_path: path,
+      last_event: eventType,
+      last_seen_at: nowIso,
+    },
+    {
+      onConflict: "install_id",
+    },
+  );
+  if (error) {
+    throw error;
+  }
+}
+
+async function recordActivity(
+  request: Request,
+  path: string,
+  eventType: string,
+  user: UserRecord | null = null,
+  usernameOverride: string | null = null,
+): Promise<void> {
+  const meta = clientMeta(request);
+  const username = usernameOverride ?? user?.username ?? null;
+  const userId = user?.id ?? null;
+  const sessionName = meta.sessionName || null;
+  const client = getAdminClient();
+  const { error } = await client.from("activity_logs").insert({
+    event_type: eventType,
+    request_path: path,
+    install_id: meta.installId || null,
+    session_name: sessionName,
+    client_type: meta.clientType,
+    app_version: meta.appVersion,
+    username,
+    user_id: userId,
+    ip_address: meta.ipAddress || null,
+    ip_country: meta.ipCountry || null,
+    user_agent: meta.userAgent || null,
+  });
+  if (error) {
+    throw error;
+  }
+}
+
+function requireAdminKey(request: Request): void {
+  const configured = Deno.env.get("PYQUEST_ADMIN_API_KEY")?.trim() ?? "";
+  if (!configured) {
+    throw new Error("Missing PYQUEST_ADMIN_API_KEY secret for admin access.");
+  }
+  const supplied = String(request.headers.get("X-Admin-Key") ?? "").trim();
+  if (!supplied || supplied !== configured) {
+    const error = new Error("Unauthorized");
+    error.name = "Unauthorized";
+    throw error;
+  }
+}
+
 function getAdminClient(): SupabaseClient {
   if (adminClient !== null) {
     return adminClient;
@@ -175,7 +300,7 @@ async function currentUser(token: string): Promise<UserRecord | null> {
   };
 }
 
-async function signup(payload: Record<string, unknown>): Promise<Response> {
+async function signup(request: Request, payload: Record<string, unknown>): Promise<Response> {
   const username = String(payload.username ?? "").trim();
   const password = String(payload.password ?? "");
   if (username.length < 3 || password.length < 4) {
@@ -209,6 +334,14 @@ async function signup(payload: Record<string, unknown>): Promise<Response> {
     throw sessionError;
   }
 
+  const user = {
+    id: Number(data.id),
+    username: String(data.username),
+    xp: Number(data.xp ?? 0),
+  } satisfies UserRecord;
+  await recordPresence(request, "/signup", "signup", user);
+  await recordActivity(request, "/signup", "signup", user);
+
   return jsonResponse(
     {
       token,
@@ -220,7 +353,7 @@ async function signup(payload: Record<string, unknown>): Promise<Response> {
   );
 }
 
-async function login(payload: Record<string, unknown>): Promise<Response> {
+async function login(request: Request, payload: Record<string, unknown>): Promise<Response> {
   const username = String(payload.username ?? "").trim();
   const password = String(payload.password ?? "");
   const client = getAdminClient();
@@ -236,6 +369,8 @@ async function login(payload: Record<string, unknown>): Promise<Response> {
     throw error;
   }
   if (!data) {
+    await recordPresence(request, "/login", "login_failed");
+    await recordActivity(request, "/login", "login_failed", null, username || null);
     return jsonResponse({ error: "Invalid username or password." }, 400);
   }
 
@@ -247,6 +382,14 @@ async function login(payload: Record<string, unknown>): Promise<Response> {
   if (sessionError) {
     throw sessionError;
   }
+
+  const user = {
+    id: Number(data.id),
+    username: String(data.username),
+    xp: Number(data.xp ?? 0),
+  } satisfies UserRecord;
+  await recordPresence(request, "/login", "login", user);
+  await recordActivity(request, "/login", "login", user);
 
   return jsonResponse({
     token,
@@ -261,6 +404,7 @@ async function profile(request: Request): Promise<Response> {
   if (!user) {
     return jsonResponse({ error: "Unauthorized." }, 401);
   }
+  await recordPresence(request, "/profile", "profile", user);
 
   const client = getAdminClient();
   const { data, error } = await client
@@ -288,6 +432,8 @@ async function submitLesson(request: Request, payload: Record<string, unknown>):
   if (!user) {
     return jsonResponse({ error: "Unauthorized." }, 401);
   }
+  await recordPresence(request, "/submit-lesson", "submit_lesson", user);
+  await recordActivity(request, "/submit-lesson", "submit_lesson", user);
 
   if (!("lesson_id" in payload) || !("selected_index" in payload)) {
     return jsonResponse({ error: "Missing required fields." }, 400);
@@ -337,7 +483,10 @@ async function submitLesson(request: Request, payload: Record<string, unknown>):
   });
 }
 
-async function leaderboard(): Promise<Response> {
+async function leaderboard(request: Request): Promise<Response> {
+  const user = await currentUser(bearerToken(request));
+  await recordPresence(request, "/leaderboard", "leaderboard", user);
+
   const client = getAdminClient();
   const { data, error } = await client.rpc("pyquest_leaderboard");
   if (error) {
@@ -380,6 +529,54 @@ async function appUpdate(): Promise<Response> {
   });
 }
 
+async function adminActivity(request: Request): Promise<Response> {
+  requireAdminKey(request);
+  const url = new URL(request.url);
+  const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? "50"), 200));
+  const client = getAdminClient();
+
+  const [presenceResult, loginResult, activityResult] = await Promise.all([
+    client
+      .from("client_presence")
+      .select(
+        "install_id, session_name, client_type, app_version, username, ip_address, ip_country, user_agent, last_path, last_event, first_seen_at, last_seen_at",
+      )
+      .order("last_seen_at", { ascending: false })
+      .limit(limit),
+    client
+      .from("activity_logs")
+      .select(
+        "id, created_at, event_type, request_path, username, session_name, client_type, app_version, ip_address, ip_country",
+      )
+      .in("event_type", ["login", "signup"])
+      .order("created_at", { ascending: false })
+      .limit(limit),
+    client
+      .from("activity_logs")
+      .select(
+        "id, created_at, event_type, request_path, username, session_name, client_type, app_version, ip_address, ip_country",
+      )
+      .order("created_at", { ascending: false })
+      .limit(limit),
+  ]);
+
+  if (presenceResult.error) {
+    throw presenceResult.error;
+  }
+  if (loginResult.error) {
+    throw loginResult.error;
+  }
+  if (activityResult.error) {
+    throw activityResult.error;
+  }
+
+  return jsonResponse({
+    active_clients: presenceResult.data ?? [],
+    recent_logins: loginResult.data ?? [],
+    recent_activity: activityResult.data ?? [],
+  });
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -393,23 +590,27 @@ Deno.serve(async (request) => {
       return jsonResponse({ status: "ok" });
     }
     if (request.method === "GET" && path === "/lessons") {
+      await recordPresence(request, "/lessons", "lessons");
       return jsonResponse({ lessons: lessonCatalog });
     }
     if (request.method === "GET" && path === "/profile") {
       return await profile(request);
     }
     if (request.method === "GET" && path === "/leaderboard") {
-      return await leaderboard();
+      return await leaderboard(request);
     }
     if (request.method === "GET" && path === "/app-update") {
       return await appUpdate();
     }
+    if (request.method === "GET" && path === "/admin/activity") {
+      return await adminActivity(request);
+    }
 
     if (request.method === "POST" && path === "/signup") {
-      return await signup(await parseJsonBody(request));
+      return await signup(request, await parseJsonBody(request));
     }
     if (request.method === "POST" && path === "/login") {
-      return await login(await parseJsonBody(request));
+      return await login(request, await parseJsonBody(request));
     }
     if (request.method === "POST" && path === "/submit-lesson") {
       return await submitLesson(request, await parseJsonBody(request));
@@ -418,6 +619,9 @@ Deno.serve(async (request) => {
     return jsonResponse({ error: "Not found." }, 404);
   } catch (error) {
     console.error("pyquest-api error", error);
+    if (error instanceof Error && error.name === "Unauthorized") {
+      return jsonResponse({ error: "Unauthorized." }, 401);
+    }
     return jsonResponse({ error: "Server error." }, 500);
   }
 });

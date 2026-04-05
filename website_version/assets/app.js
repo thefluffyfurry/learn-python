@@ -1,6 +1,9 @@
 const API_BASE_URL = "https://keyquuyuamfuvotaruod.supabase.co/functions/v1/pyquest-api";
 const LOCAL_PROGRESS_KEY = "pyquest_web_progress_v2";
 const LOCAL_SESSION_KEY = "pyquest_web_session_v2";
+const LOCAL_CLIENT_IDENTITY_KEY = "pyquest_web_client_identity_v1";
+const SESSION_ADMIN_KEY = "pyquest_web_admin_key_v1";
+const WEB_APP_VERSION = "2.2.1-web";
 
 const state = {
   apiAvailable: false,
@@ -11,6 +14,9 @@ const state = {
   completedIds: new Set(),
   localProgress: loadJson(LOCAL_PROGRESS_KEY, { completedIds: [], xp: 0 }),
   session: loadJson(LOCAL_SESSION_KEY, { token: "", username: "" }),
+  clientIdentity: loadClientIdentity(),
+  adminKey: sessionStorage.getItem(SESSION_ADMIN_KEY) || "",
+  adminActivity: null,
   profile: null,
 };
 
@@ -65,6 +71,13 @@ const els = {
   leaderboardList: byId("leaderboard-list"),
   topicProgressCaption: byId("topic-progress-caption"),
   topicSpotlightList: byId("topic-spotlight-list"),
+  adminKeyInput: byId("admin-key-input"),
+  loadAdminButton: byId("load-admin-button"),
+  clearAdminButton: byId("clear-admin-button"),
+  adminStatus: byId("admin-status"),
+  adminPresenceList: byId("admin-presence-list"),
+  adminLoginList: byId("admin-login-list"),
+  adminActivityList: byId("admin-activity-list"),
 };
 
 boot().catch((error) => {
@@ -77,7 +90,9 @@ async function boot() {
   if (state.session.username) {
     els.usernameInput.value = state.session.username;
   }
+  els.adminKeyInput.value = state.adminKey;
   await refreshEverything();
+  renderAdminActivity();
 }
 
 function bindEvents() {
@@ -90,6 +105,8 @@ function bindEvents() {
   els.filterSelect.addEventListener("change", renderLessonList);
   els.topicSelect.addEventListener("change", renderLessonList);
   els.submitButton.addEventListener("click", submitActiveLesson);
+  els.loadAdminButton.addEventListener("click", loadAdminActivity);
+  els.clearAdminButton.addEventListener("click", clearAdminKey);
 }
 
 async function refreshEverything() {
@@ -102,10 +119,17 @@ async function refreshEverything() {
   renderLessonList();
   renderLeaderboard();
   updateAuthButtons();
+  renderAdminActivity();
 }
 
 async function apiCall(path, method = "GET", payload = null, token = state.session.token) {
-  const headers = { "Content-Type": "application/json" };
+  const headers = {
+    "Content-Type": "application/json",
+    "X-PyQuest-App-Version": WEB_APP_VERSION,
+    "X-PyQuest-Client-Type": "web",
+    "X-PyQuest-Session-Name": state.clientIdentity.sessionName,
+    "X-PyQuest-Install-Id": state.clientIdentity.installId,
+  };
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
@@ -216,6 +240,52 @@ async function authenticate(mode) {
   } catch (error) {
     setStatus(error.message);
   }
+}
+
+async function loadAdminActivity() {
+  const adminKey = els.adminKeyInput.value.trim();
+  if (!adminKey) {
+    els.adminStatus.textContent = "Enter the admin key first.";
+    return;
+  }
+  if (!state.apiAvailable) {
+    els.adminStatus.textContent = "Hosted API is unavailable, so admin activity cannot load.";
+    return;
+  }
+
+  state.adminKey = adminKey;
+  sessionStorage.setItem(SESSION_ADMIN_KEY, adminKey);
+  els.adminStatus.textContent = "Loading admin activity...";
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/admin/activity?limit=30`, {
+      method: "GET",
+      headers: {
+        "X-Admin-Key": adminKey,
+      },
+    });
+    const text = await response.text();
+    const data = text ? JSON.parse(text) : {};
+    if (!response.ok) {
+      throw new Error(data.error || "Could not load admin activity.");
+    }
+    state.adminActivity = data;
+    els.adminStatus.textContent = "Admin activity loaded from the hosted server.";
+    renderAdminActivity();
+  } catch (error) {
+    state.adminActivity = null;
+    els.adminStatus.textContent = error.message || "Could not load admin activity.";
+    renderAdminActivity();
+  }
+}
+
+function clearAdminKey() {
+  state.adminKey = "";
+  state.adminActivity = null;
+  sessionStorage.removeItem(SESSION_ADMIN_KEY);
+  els.adminKeyInput.value = "";
+  els.adminStatus.textContent = "Admin key cleared.";
+  renderAdminActivity();
 }
 
 function logout() {
@@ -494,6 +564,63 @@ function renderLeaderboard() {
   }
 }
 
+function renderAdminActivity() {
+  const payload = state.adminActivity || {};
+  renderAdminRows(
+    els.adminPresenceList,
+    payload.active_clients || [],
+    (row) => `
+      <strong>${escapeHtml(row.session_name || "unknown session")}</strong>
+      <p>
+        User: ${escapeHtml(row.username || "guest")}<br>
+        Version: ${escapeHtml(row.app_version || "unknown")} | Client: ${escapeHtml(row.client_type || "unknown")}<br>
+        IP: ${escapeHtml(row.ip_address || "unknown")} ${row.ip_country ? `(${escapeHtml(row.ip_country)})` : ""}<br>
+        Last: ${escapeHtml(row.last_event || "seen")} on ${escapeHtml(row.last_path || "/")}<br>
+        Seen: ${escapeHtml(formatStamp(row.last_seen_at))}
+      </p>
+    `,
+    "Load admin activity to see current installs.",
+  );
+
+  renderAdminRows(
+    els.adminLoginList,
+    payload.recent_logins || [],
+    (row) => `
+      <strong>${escapeHtml(row.username || "unknown")} - ${escapeHtml(row.event_type || "login")}</strong>
+      <p>
+        Session: ${escapeHtml(row.session_name || "unknown")}<br>
+        Version: ${escapeHtml(row.app_version || "unknown")} | Client: ${escapeHtml(row.client_type || "unknown")}<br>
+        IP: ${escapeHtml(row.ip_address || "unknown")} ${row.ip_country ? `(${escapeHtml(row.ip_country)})` : ""}<br>
+        Time: ${escapeHtml(formatStamp(row.created_at))}
+      </p>
+    `,
+    "Recent sign-ins will appear here.",
+  );
+
+  renderAdminRows(
+    els.adminActivityList,
+    payload.recent_activity || [],
+    (row) => `
+      <strong>${escapeHtml(row.request_path || "/")} - ${escapeHtml(row.event_type || "activity")}</strong>
+      <p>
+        User: ${escapeHtml(row.username || "guest")} | Session: ${escapeHtml(row.session_name || "unknown")}<br>
+        Version: ${escapeHtml(row.app_version || "unknown")}<br>
+        IP: ${escapeHtml(row.ip_address || "unknown")}<br>
+        Time: ${escapeHtml(formatStamp(row.created_at))}
+      </p>
+    `,
+    "Recent requests will appear here.",
+  );
+}
+
+function renderAdminRows(container, rows, template, emptyText) {
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty-state compact-empty">${escapeHtml(emptyText)}</div>`;
+    return;
+  }
+  container.innerHTML = rows.map((row) => `<div class="admin-row">${template(row)}</div>`).join("");
+}
+
 function openRecommendedLesson() {
   const lesson = recommendedLesson();
   if (!lesson) {
@@ -541,6 +668,26 @@ function setStatus(message) {
   els.authMessage.textContent = message;
 }
 
+function formatStamp(value) {
+  if (!value) {
+    return "unknown";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toLocaleString();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function byId(id) {
   return document.getElementById(id);
 }
@@ -551,6 +698,24 @@ function loadJson(key, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function loadClientIdentity() {
+  const fallback = {
+    installId: randomId(),
+    sessionName: `web-${randomId().slice(0, 8)}`,
+  };
+  const loaded = loadJson(LOCAL_CLIENT_IDENTITY_KEY, fallback);
+  const identity = {
+    installId: String(loaded.installId || fallback.installId),
+    sessionName: String(loaded.sessionName || fallback.sessionName),
+  };
+  saveJson(LOCAL_CLIENT_IDENTITY_KEY, identity);
+  return identity;
+}
+
+function randomId() {
+  return Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2);
 }
 
 function saveJson(key, value) {
