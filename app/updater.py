@@ -6,6 +6,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from urllib import error, request
@@ -20,6 +21,7 @@ class UpdateInfo:
     download_url: str
     notes: str = ""
     release_url: str = ""
+    asset_name: str = ""
 
 
 APP_META_DB = app_root() / "teaching_app.db"
@@ -82,9 +84,10 @@ def can_self_update() -> bool:
     return os.name == "nt" and getattr(sys, "frozen", False)
 
 
-def fetch_github_update(repo: str, asset_name: str) -> UpdateInfo | None:
+def fetch_github_update(repo: str, asset_name: str, zip_asset_name: str = "") -> UpdateInfo | None:
     repo = repo.strip().strip("/")
     asset_name = asset_name.strip()
+    zip_asset_name = zip_asset_name.strip()
     if not repo or not asset_name:
         return None
 
@@ -120,13 +123,14 @@ def fetch_github_update(repo: str, asset_name: str) -> UpdateInfo | None:
         return None
 
     assets = data.get("assets") or []
-    selected_asset = next(
-        (asset for asset in assets if str(asset.get("name", "")).strip().lower() == asset_name.lower()),
-        None,
-    )
+    desired_names = [asset_name.lower()]
+    if zip_asset_name:
+        desired_names.append(zip_asset_name.lower())
+    selected_asset = next((asset for asset in assets if str(asset.get("name", "")).strip().lower() in desired_names), None)
     if selected_asset is None:
         return None
 
+    resolved_asset_name = str(selected_asset.get("name", "")).strip()
     download_url = str(selected_asset.get("browser_download_url", "")).strip()
     if not download_url:
         return None
@@ -136,7 +140,13 @@ def fetch_github_update(repo: str, asset_name: str) -> UpdateInfo | None:
 
     if _version_key(version) <= _version_key(current_version):
         return None
-    return UpdateInfo(version=version, download_url=download_url, notes=notes, release_url=release_url)
+    return UpdateInfo(
+        version=version,
+        download_url=download_url,
+        notes=notes,
+        release_url=release_url,
+        asset_name=resolved_asset_name,
+    )
 
 
 def stage_update(update: UpdateInfo) -> None:
@@ -145,11 +155,13 @@ def stage_update(update: UpdateInfo) -> None:
 
     current_exe = Path(sys.executable).resolve()
     pending_exe = current_exe.with_name(f"{current_exe.stem}-{update.version}.pending.exe")
+    pending_archive = current_exe.with_name(f"{current_exe.stem}-{update.version}.pending.zip")
     updater_script = current_exe.with_name("apply_update.bat")
 
     req = request.Request(update.download_url, headers={"User-Agent": "PyQuestAcademyUpdater"})
     try:
-        with request.urlopen(req, timeout=30) as response, pending_exe.open("wb") as handle:
+        target_path = pending_archive if update.asset_name.lower().endswith(".zip") else pending_exe
+        with request.urlopen(req, timeout=30) as response, target_path.open("wb") as handle:
             while True:
                 chunk = response.read(1024 * 64)
                 if not chunk:
@@ -158,7 +170,34 @@ def stage_update(update: UpdateInfo) -> None:
     except error.URLError as exc:
         if pending_exe.exists():
             pending_exe.unlink(missing_ok=True)
+        if pending_archive.exists():
+            pending_archive.unlink(missing_ok=True)
         raise RuntimeError(f"Cannot download the new version from {update.download_url}.") from exc
+
+    if update.asset_name.lower().endswith(".zip"):
+        if not pending_archive.exists() or pending_archive.stat().st_size == 0:
+            pending_archive.unlink(missing_ok=True)
+            raise RuntimeError("The downloaded update file was empty.")
+        try:
+            with zipfile.ZipFile(pending_archive) as archive:
+                exe_member = next(
+                    (name for name in archive.namelist() if Path(name).name.lower() == current_exe.name.lower()),
+                    None,
+                )
+                if exe_member is None:
+                    exe_member = next(
+                        (name for name in archive.namelist() if Path(name).suffix.lower() == ".exe"),
+                        None,
+                    )
+                if exe_member is None:
+                    raise RuntimeError("The update zip does not contain a Windows executable.")
+                with archive.open(exe_member) as source, pending_exe.open("wb") as target:
+                    target.write(source.read())
+        except zipfile.BadZipFile as exc:
+            pending_archive.unlink(missing_ok=True)
+            raise RuntimeError("The downloaded update zip is not valid.") from exc
+        finally:
+            pending_archive.unlink(missing_ok=True)
 
     if not pending_exe.exists() or pending_exe.stat().st_size == 0:
         pending_exe.unlink(missing_ok=True)

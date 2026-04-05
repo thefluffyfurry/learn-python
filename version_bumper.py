@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import zipfile
 from pathlib import Path
 from tkinter import messagebox
 
@@ -95,6 +96,9 @@ def build_main_exe(root_dir: Path) -> Path:
     exe_path = dist_dir / "PyQuestAcademy.exe"
     if not exe_path.exists():
         raise RuntimeError("Build finished but dist_release\\PyQuestAcademy.exe was not created.")
+    zip_path = dist_dir / "PyQuestAcademy.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(exe_path, arcname=exe_path.name)
     return exe_path
 
 

@@ -12,7 +12,7 @@ from urllib import error, request
 
 from app.content import LESSON_MAP
 from app.runtime import app_root
-from app.settings import GITHUB_UPDATE_ASSET_NAME, GITHUB_UPDATE_REPO, LOCAL_API_URL
+from app.settings import GITHUB_UPDATE_ASSET_NAME, GITHUB_UPDATE_REPO, GITHUB_UPDATE_ZIP_ASSET_NAME, LOCAL_API_URL
 from app.updater import UpdateInfo, can_self_update, fetch_github_update, stage_update, sync_installed_version
 from app.version import APP_NAME, APP_VERSION
 
@@ -896,7 +896,7 @@ class TeachingApp(tk.Tk):
 
     def _check_for_updates_worker(self) -> None:
         try:
-            update = fetch_github_update(GITHUB_UPDATE_REPO, GITHUB_UPDATE_ASSET_NAME)
+            update = fetch_github_update(GITHUB_UPDATE_REPO, GITHUB_UPDATE_ASSET_NAME, GITHUB_UPDATE_ZIP_ASSET_NAME)
         except RuntimeError:
             update = None
         self.after(0, lambda: self._handle_update_result(update))
