@@ -4,4 +4,4 @@ from __future__ import annotations
 
 
 APP_NAME = "PyQuest Academy"
-APP_VERSION = "5.2.2"
+APP_VERSION = "0.0.1"
