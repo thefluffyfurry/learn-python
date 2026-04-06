@@ -5,6 +5,7 @@ create table if not exists public.app_updates (
     asset_name text not null default 'PyQuestAcademy.zip',
     notes text not null default '',
     wipe_local_state boolean not null default false,
+    force_update boolean not null default false,
     updated_at timestamptz not null default timezone('utc', now())
 );
 
@@ -19,7 +20,8 @@ insert into public.app_updates (
     download_url,
     asset_name,
     notes,
-    wipe_local_state
+    wipe_local_state,
+    force_update
 )
 values (
     'desktop',
@@ -27,6 +29,7 @@ values (
     'https://keyquuyuamfuvotaruod.supabase.co/storage/v1/object/public/updates/windows/PyQuestAcademy.zip',
     'PyQuestAcademy.zip',
     'Full package refresh from the hosted server.',
+    false,
     false
 )
 on conflict (slug) do update set
@@ -35,5 +38,5 @@ on conflict (slug) do update set
     asset_name = excluded.asset_name,
     notes = excluded.notes,
     wipe_local_state = excluded.wipe_local_state,
+    force_update = excluded.force_update,
     updated_at = timezone('utc', now());
-

@@ -22,6 +22,7 @@ class UpdateInfo:
     notes: str = ""
     asset_name: str = ""
     wipe_local_state: bool = False
+    force_update: bool = False
 
 
 APP_META_DB = app_root() / "teaching_app.db"
@@ -129,8 +130,9 @@ def fetch_server_update(base_url: str, path: str = "/app-update") -> UpdateInfo 
     notes = str(data.get("notes", "")).strip()
     asset_name = str(data.get("asset_name", "")).strip() or Path(download_url).name
     wipe_local_state = bool(data.get("wipe_local_state", False))
+    force_update = bool(data.get("force_update", False))
 
-    if _version_key(version) <= _version_key(current_version):
+    if not force_update and _version_key(version) <= _version_key(current_version):
         return None
     return UpdateInfo(
         version=version,
@@ -138,6 +140,7 @@ def fetch_server_update(base_url: str, path: str = "/app-update") -> UpdateInfo 
         notes=notes,
         asset_name=asset_name,
         wipe_local_state=wipe_local_state,
+        force_update=force_update,
     )
 
 

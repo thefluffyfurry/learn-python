@@ -39,6 +39,7 @@ type AppUpdateRow = {
   notes: string | null;
   asset_name: string | null;
   wipe_local_state: boolean | null;
+  force_update: boolean | null;
 };
 
 type ClientMeta = {
@@ -508,7 +509,7 @@ async function appUpdate(): Promise<Response> {
   const client = getAdminClient();
   const { data, error } = await client
     .from("app_updates")
-    .select("version, download_url, notes, asset_name, wipe_local_state")
+    .select("version, download_url, notes, asset_name, wipe_local_state, force_update")
     .eq("slug", "desktop")
     .maybeSingle();
 
@@ -526,6 +527,7 @@ async function appUpdate(): Promise<Response> {
     notes: String(row.notes ?? ""),
     asset_name: String(row.asset_name ?? ""),
     wipe_local_state: Boolean(row.wipe_local_state ?? false),
+    force_update: Boolean(row.force_update ?? false),
   });
 }
 
