@@ -8,7 +8,7 @@ insert into public.app_updates (
 )
 values (
     'desktop',
-    '5.0.1',
+    '5.1.1',
     'https://keyquuyuamfuvotaruod.supabase.co/storage/v1/object/public/updates/windows/PyQuestAcademy.zip',
     'PyQuestAcademy.zip',
     'Full package refresh from the hosted server.',
